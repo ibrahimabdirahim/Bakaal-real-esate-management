@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+/*
+ * Bakaal design tokens, sampled from the approved prototype's dashboard mockup:
+ * navy top bar and sidebar, bright-blue active state, light blue-grey page, white cards,
+ * and blue / green / amber / red accents. brand-* is the BKL logo's slate-teal.
+ */
+@theme {
+  /* Taken from the approved prototype dashboard mockup (and the BKL logo for brand-*). */
+  --color-brand-50: #f3f6f7;
+  --color-brand-100: #e4ebed;
+  --color-brand-200: #cad6da;
+  --color-brand-300: #a8bbc1;
+  --color-brand-400: #859ba1;
+  --color-brand-500: #6c848b;
+  --color-brand-600: #566b72;
+  --color-brand-700: #47575d;
+  --color-brand-800: #3d4a4f;
+  --color-brand-900: #354044;
+
+  --color-navy-600: #2a4a6e;
+  --color-navy-700: #163c63;
+  --color-navy-800: #0e3052; /* sidebar */
+  --color-navy-900: #0a2c4c; /* top bar */
+  --color-navy-950: #071f37;
+
+  --color-primary-50: #eaf2fe;
+  --color-primary-100: #d4e4fd;
+  --color-primary-500: #3b7ff0;
+  --color-primary-600: #0c60e7; /* active navigation, primary buttons */
+  --color-primary-700: #0a4fc0;
+
+  --color-accent-blue: #0c63e9;
+  --color-accent-green: #0c9c5d;
+  --color-accent-amber: #e19404;
+  --color-accent-red: #dc3e3b;
+
+  --color-ink: #071a33;
+  --color-muted: #6b7f9c;
+  --color-surface: #f2f6fb;
+  --color-line: #e3e9f1;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius-card: 0.6rem;
+  --shadow-card: 0 1px 2px rgb(10 44 76 / 0.04), 0 2px 6px rgb(10 44 76 / 0.05);
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+
+dialog::backdrop {
+  background: rgb(10 23 38 / 0.45);
+}
+
+/*
+ * Responsive tables: below the sm breakpoint every row becomes a card and each cell
+ * shows its column name (data-label), so wide tables never cause page overflow.
+ */
+@media (max-width: 639px) {
+  table.responsive-table thead {
+    display: none;
+  }
+  table.responsive-table,
+  table.responsive-table tbody,
+  table.responsive-table tr,
+  table.responsive-table td {
+    display: block;
+    width: 100%;
+  }
+  table.responsive-table tr {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.6rem;
+    margin: 0 0 0.75rem;
+    padding: 0.35rem 0;
+    background: #fff;
+  }
+  table.responsive-table tbody {
+    border: 0 !important;
+  }
+  table.responsive-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 0.35rem 0.85rem;
+    white-space: normal;
+    text-align: right;
+    min-width: 0;
+  }
+  table.responsive-table td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    max-width: 45%;
+    text-align: left;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+  }
+  table.responsive-table td:empty,
+  table.responsive-table td[data-label=""]::before {
+    display: none;
+  }
+}
+
+/* Collapsed desktop sidebar (toggled in the navigation component). */
+@media (min-width: 1024px) {
+  html[data-sidebar="collapsed"] .app-main {
+    padding-left: 4.5rem;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  main {
+    padding: 0 !important;
+  }
+  .print-plain {
+    box-shadow: none !important;
+    border-color: #ddd !important;
+  }
+}

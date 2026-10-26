@@ -1,0 +1,561 @@
+// Bakaal Real Estate Management System — database schema.
+// Money is stored as Decimal(14,2). Posted financial records are never deleted;
+// corrections use credit notes, rejections and reversals. Audit events are
+// append-only (enforced by a database trigger in the migrations).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Staff access
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  MANAGER
+  FINANCE
+  OPERATIONS
+  AUDITOR
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String
+  passwordHash     String
+  role             Role
+  isActive         Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions Session[]
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+model AuditEvent {
+  id         BigInt   @id @default(autoincrement())
+  occurredAt DateTime @default(now())
+  actorId    String?
+  actorEmail String?
+  action     String
+  entityType String
+  entityId   String?
+  summary    String
+  before     Json?
+  after      Json?
+  reason     String?
+
+  @@index([entityType, entityId])
+  @@index([occurredAt])
+}
+
+model DocumentSequence {
+  key       String @id
+  nextValue Int    @default(1)
+}
+
+// ---------------------------------------------------------------------------
+// Property records
+// ---------------------------------------------------------------------------
+
+model Building {
+  id         String   @id @default(cuid())
+  name       String
+  address    String?
+  currency   String   @default("KES")
+  timezone   String   @default("Africa/Nairobi")
+  /// Total physical units in the building (capacity). Null = not configured. Must be > 0 (DB check).
+  totalUnits Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  units       Unit[]
+  agreements  Agreement[]
+  policies    BuildingPolicy[]
+  invoices    Invoice[]
+  payments    Payment[]
+  expenses    Expense[]
+  staff       StaffMember[]
+  workOrders  WorkOrder[]
+  billingRuns BillingRun[]
+}
+
+model Unit {
+  id         String   @id @default(cuid())
+  buildingId String
+  building   Building @relation(fields: [buildingId], references: [id])
+  unitNumber String
+  floor      String?
+  unitType   String?
+  notes      String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  agreements Agreement[]
+  invoices   Invoice[]
+  workOrders WorkOrder[]
+
+  @@unique([buildingId, unitNumber])
+}
+
+model Party {
+  id          String    @id @default(cuid())
+  displayName String
+  phone       String?
+  email       String?
+  idNumber    String?
+  notes       String?
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  agreements Agreement[]
+  invoices   Invoice[]
+  payments   Payment[]
+}
+
+enum AgreementType {
+  RENTAL
+  OWNERSHIP
+  MANAGEMENT
+}
+
+enum AgreementStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+model Agreement {
+  id                  String          @id @default(cuid())
+  buildingId          String
+  building            Building        @relation(fields: [buildingId], references: [id])
+  unitId              String
+  unit                Unit            @relation(fields: [unitId], references: [id])
+  partyId             String
+  party               Party           @relation(fields: [partyId], references: [id])
+  type                AgreementType
+  status              AgreementStatus @default(ACTIVE)
+  reference           String?
+  startDate           DateTime        @db.Date
+  endDate             DateTime?       @db.Date
+  rentAmount          Decimal?        @db.Decimal(14, 2)
+  managementFeeAmount Decimal?        @db.Decimal(14, 2)
+  /// Deposit agreed in a rental agreement (F52): an agreed term, never billed or counted as received.
+  depositAmount       Decimal?        @db.Decimal(14, 2)
+  dueDay              Int?
+  graceDays           Int?
+  purchaseDate        DateTime?       @db.Date
+  ownershipEvidence   String?
+  lateFeeTerms        String?
+  allocationTerms     String?
+  notes               String?
+  endReason           String?
+  createdById         String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  charges  AgreementCharge[]
+  invoices Invoice[]
+
+  @@index([unitId, type])
+  @@index([partyId])
+}
+
+enum ChargeCategory {
+  RENT
+  MANAGEMENT_FEE
+  SERVICE_CHARGE
+  SHARED_CHARGE
+  OTHER
+}
+
+model AgreementCharge {
+  id            String         @id @default(cuid())
+  agreementId   String
+  agreement     Agreement      @relation(fields: [agreementId], references: [id])
+  category      ChargeCategory
+  description   String
+  amount        Decimal        @db.Decimal(14, 2)
+  effectiveFrom DateTime       @db.Date
+  effectiveTo   DateTime?      @db.Date
+  createdAt     DateTime       @default(now())
+
+  @@index([agreementId])
+}
+
+enum PolicyKey {
+  DEFAULT_DUE_DAY
+}
+
+model BuildingPolicy {
+  id            String    @id @default(cuid())
+  buildingId    String
+  building      Building  @relation(fields: [buildingId], references: [id])
+  key           PolicyKey
+  value         String
+  effectiveFrom DateTime  @db.Date
+  note          String?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  approvedById  String?
+  approvedAt    DateTime?
+
+  @@index([buildingId, key, effectiveFrom])
+}
+
+// ---------------------------------------------------------------------------
+// Billing, invoices, payments
+// ---------------------------------------------------------------------------
+
+model BillingRun {
+  id           String   @id @default(cuid())
+  buildingId   String
+  building     Building @relation(fields: [buildingId], references: [id])
+  periodStart  DateTime @db.Date
+  issuedById   String
+  issuedAt     DateTime @default(now())
+  invoiceCount Int
+  skippedCount Int
+  notes        String?
+
+  invoices Invoice[]
+}
+
+enum InvoiceKind {
+  RECURRING
+  MANUAL
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+}
+
+model Invoice {
+  id           String        @id @default(cuid())
+  number       String?       @unique
+  buildingId   String
+  building     Building      @relation(fields: [buildingId], references: [id])
+  partyId      String
+  party        Party         @relation(fields: [partyId], references: [id])
+  unitId       String
+  unit         Unit          @relation(fields: [unitId], references: [id])
+  agreementId  String?
+  agreement    Agreement?    @relation(fields: [agreementId], references: [id])
+  billingRunId String?
+  billingRun   BillingRun?   @relation(fields: [billingRunId], references: [id])
+  kind         InvoiceKind
+  status       InvoiceStatus @default(DRAFT)
+  periodStart  DateTime?     @db.Date
+  periodEnd    DateTime?     @db.Date
+  issueDate    DateTime?     @db.Date
+  dueDate      DateTime?     @db.Date
+  total        Decimal       @db.Decimal(14, 2)
+  notes        String?
+  createdById  String?
+  createdAt    DateTime      @default(now())
+  issuedById   String?
+  issuedAt     DateTime?
+
+  lines       InvoiceLine[]
+  allocations PaymentAllocation[]
+  creditNotes CreditNote[]
+
+  @@unique([agreementId, periodStart])
+  @@index([partyId])
+  @@index([unitId])
+}
+
+model InvoiceLine {
+  id          String         @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice        @relation(fields: [invoiceId], references: [id])
+  category    ChargeCategory
+  description String
+  amount      Decimal        @db.Decimal(14, 2)
+  sourceType  String
+  sourceId    String?
+
+  @@index([invoiceId])
+}
+
+model CreditNote {
+  id          String   @id @default(cuid())
+  number      String   @unique
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  amount      Decimal  @db.Decimal(14, 2)
+  reason      String
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@index([invoiceId])
+}
+
+enum PaymentMethod {
+  MPESA
+  BANK
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  REVERSED
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  receiptNumber   String?       @unique
+  buildingId      String
+  building        Building      @relation(fields: [buildingId], references: [id])
+  partyId         String
+  party           Party         @relation(fields: [partyId], references: [id])
+  method          PaymentMethod
+  reference       String
+  amount          Decimal       @db.Decimal(14, 2)
+  receivedDate    DateTime      @db.Date
+  status          PaymentStatus @default(PENDING)
+  evidenceNote    String?
+  recordedById    String
+  recordedAt      DateTime      @default(now())
+  verifiedById    String?
+  verifiedAt      DateTime?
+  rejectedById    String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  reversedById    String?
+  reversedAt      DateTime?
+  reversalReason  String?
+
+  allocations PaymentAllocation[]
+
+  @@unique([method, reference])
+  @@index([partyId])
+}
+
+model PaymentAllocation {
+  id          String    @id @default(cuid())
+  paymentId   String
+  payment     Payment   @relation(fields: [paymentId], references: [id])
+  invoiceId   String
+  invoice     Invoice   @relation(fields: [invoiceId], references: [id])
+  amount      Decimal   @db.Decimal(14, 2)
+  createdById String
+  createdAt   DateTime  @default(now())
+  reversedAt  DateTime?
+
+  @@index([paymentId])
+  @@index([invoiceId])
+}
+
+// ---------------------------------------------------------------------------
+// Expenses, staff, maintenance
+// ---------------------------------------------------------------------------
+
+enum ExpenseCategory {
+  WATER
+  ELECTRICITY
+  SECURITY
+  CLEANING
+  GARBAGE
+  SALARIES
+  REPAIRS
+  MAINTENANCE
+  ADMINISTRATION
+  OTHER
+}
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model Expense {
+  id                 String          @id @default(cuid())
+  number             String          @unique
+  buildingId         String
+  building           Building        @relation(fields: [buildingId], references: [id])
+  category           ExpenseCategory
+  payee              String
+  description        String
+  amount             Decimal         @db.Decimal(14, 2)
+  servicePeriodStart DateTime?       @db.Date
+  servicePeriodEnd   DateTime?       @db.Date
+  costCentre         String?
+  evidenceNote       String?
+  status             ExpenseStatus   @default(DRAFT)
+  createdById        String
+  createdAt          DateTime        @default(now())
+  submittedById      String?
+  submittedAt        DateTime?
+  decidedById        String?
+  decidedAt          DateTime?
+  decisionReason     String?
+  paidById           String?
+  paidAt             DateTime?
+  paymentMethod      PaymentMethod?
+  paymentReference   String?
+  /// The date the money actually left (entered when marking paid); paidAt is when that was recorded.
+  paidDate           DateTime?       @db.Date
+  workOrderId        String?
+  workOrder          WorkOrder?      @relation(fields: [workOrderId], references: [id])
+  staffMemberId      String?
+  staffMember        StaffMember?    @relation(fields: [staffMemberId], references: [id])
+  /// Salary payments (category SALARIES): amount = gross + allowances − deductions (checked in the database).
+  /// One salary payment per staff member and month unless rejected (exclusion constraint in the migration).
+  salaryGross        Decimal?        @db.Decimal(14, 2)
+  salaryAllowances   Decimal?        @db.Decimal(14, 2)
+  salaryDeductions   Decimal?        @db.Decimal(14, 2)
+}
+
+model StaffMember {
+  id           String    @id @default(cuid())
+  buildingId   String
+  building     Building  @relation(fields: [buildingId], references: [id])
+  fullName     String
+  position     String
+  phone        String?
+  salaryAmount Decimal?  @db.Decimal(14, 2)
+  startDate    DateTime? @db.Date
+  endDate      DateTime? @db.Date
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tasks    StaffTask[]
+  expenses Expense[]
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+  CANCELLED
+}
+
+model StaffTask {
+  id            String       @id @default(cuid())
+  staffMemberId String?
+  staffMember   StaffMember? @relation(fields: [staffMemberId], references: [id])
+  title         String
+  dueDate       DateTime?    @db.Date
+  status        TaskStatus   @default(OPEN)
+  notes         String?
+  createdById   String
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+  completedById String?
+}
+
+enum WorkOrderPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum WorkOrderStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model WorkOrder {
+  id            String            @id @default(cuid())
+  number        String            @unique
+  buildingId    String
+  building      Building          @relation(fields: [buildingId], references: [id])
+  unitId        String?
+  unit          Unit?             @relation(fields: [unitId], references: [id])
+  location      String?
+  title         String
+  description   String?
+  priority      WorkOrderPriority @default(MEDIUM)
+  status        WorkOrderStatus   @default(OPEN)
+  reportedVia   String?
+  assignee      String?
+  quoteAmount   Decimal?          @db.Decimal(14, 2)
+  quoteApproved Boolean?
+  outcome       String?
+  costTreatment String?
+  createdById   String
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  closedAt      DateTime?
+
+  expenses Expense[]
+}
+
+/// What a document is attached to. Null while a file is staged (uploaded, not yet saved with a record).
+enum DocumentOwner {
+  PARTY
+  AGREEMENT
+  UNIT
+  PAYMENT
+  EXPENSE
+  WORK_ORDER
+  STAFF_MEMBER
+}
+
+enum DocumentCategory {
+  ID_DOCUMENT
+  SIGNED_AGREEMENT
+  PHOTO
+  PROOF_OF_PAYMENT
+  RECEIPT
+  SUPPLIER_INVOICE
+  OTHER
+}
+
+/// Metadata of an uploaded file. The file itself is in private storage under `storageKey`
+/// (never in the database, never public). Removal is a soft removal: the record and file are kept.
+model Document {
+  id           String           @id @default(cuid())
+  ownerType    DocumentOwner?
+  ownerId      String?
+  category     DocumentCategory
+  originalName String
+  storageKey   String           @unique
+  mimeType     String
+  sizeBytes    Int
+  sha256       String
+  uploadedById String
+  uploadedAt   DateTime         @default(now())
+  attachedAt   DateTime?
+  removedAt    DateTime?
+  removedById  String?
+  removeReason String?
+
+  @@index([ownerType, ownerId])
+  @@index([uploadedById, attachedAt])
+}
