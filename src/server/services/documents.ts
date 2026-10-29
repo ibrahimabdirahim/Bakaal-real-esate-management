@@ -1,6 +1,7 @@
 // Documents (PDF, JPEG, PNG) attached to records. Files are uploaded one at a time and
 // "staged" (owner not set); saving a record attaches its staged files in the same database
 // transaction. Attached documents are never deleted, only soft-removed with a reason.
+import { errorFields, log } from "@/server/log";
 import { db, type DbOrTx } from "@/server/db";
 import { audit } from "@/server/audit";
 import { BusinessError, requirePermission, type Actor } from "@/server/auth/actor";
@@ -43,7 +44,7 @@ async function purgeStaleStaged() {
   const stale = await db.document.findMany({ where: { ownerType: null, uploadedAt: { lt: new Date(Date.now() - STAGED_LIFETIME_MS) } }, select: { id: true, storageKey: true }, take: 100 });
   for (const d of stale) {
     await db.document.deleteMany({ where: { id: d.id, ownerType: null } });
-    await deleteStoredFile(d.storageKey);
+    await deleteStoredFile(d.storageKey).catch((e) => log("warn", "Could not remove an abandoned upload's file", { storageKey: d.storageKey, ...errorFields(e) }));
   }
 }
 
@@ -68,7 +69,8 @@ export async function stageUpload(actor: Actor, input: { ownerType: DocumentOwne
       select: { id: true, originalName: true, mimeType: true, sizeBytes: true, category: true },
     });
   } catch (e) {
-    await deleteStoredFile(key); // no orphan file if the metadata cannot be saved
+    // No orphan file if the metadata cannot be saved; a failed clean-up is logged, never hides the real error.
+    await deleteStoredFile(key).catch((cleanup) => log("error", "Could not remove a stored file after a failed upload", { storageKey: key, ...errorFields(cleanup) }));
     throw e;
   }
 }
