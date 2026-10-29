@@ -161,6 +161,28 @@ administrator with `DATABASE_URL=<direct string> npm run user:create-admin`. Nev
 stored on the server's disk (`storage/`): production needs persistent storage for them, decided
 before going live.
 
+## Deploying to production (Render + Neon)
+
+Nothing deploys by itself: migrations are applied by hand, and the code goes live when `main` is
+pushed (if Render auto-deploys). Order matters, because new code may need the new database tables:
+
+1. On a branch, all checks green: `npm run lint`, `npm run typecheck`, `npm test`,
+   `npm run test:integration`, `npm run build`, `npm run test:workflow`, `npm run test:smoke`.
+2. Neon: create a backup branch of production (Neon console → Branches → Create branch).
+3. `npm run db:neon:status` — see what is pending; then `npm run db:neon:deploy -- --confirm`.
+4. Merge and push to `main` so Render builds and starts the new code (build: `npm ci && npm run build`;
+   start: `npx next start -p $PORT` — Render assigns `PORT`; `npm start` is for this computer, port 3001).
+5. Check: `npm run db:neon:status` says up to date, and `https://<render-url>/api/health` returns
+   `{"status":"ok","latestMigration":"<the newest migration folder>"}`; sign in and open the main pages.
+
+If step 3 fails, the migration changed nothing (each runs in a transaction): fix and retry. To undo a
+deploy, redeploy the previous commit in Render; a migration is not rolled back automatically — restore
+from the Neon backup branch only if data were affected. Uploaded documents live on the server's disk
+(`storage/`): on Render they need a persistent disk (or other storage) before any are uploaded.
+
+**Health check** — `GET /api/health` (no sign-in needed; reveals nothing): 200 when the app can reach
+its database, 503 when it cannot. Use it as Render's health check path.
+
 ## Project structure
 
 ```text
