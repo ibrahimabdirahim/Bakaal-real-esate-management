@@ -10,6 +10,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Document uploads/downloads check the session themselves (and must not be buffered by the proxy).
-  matcher: ["/((?!login|api/documents|_next/static|_next/image|favicon.ico).*)"],
+  // Document uploads/downloads check the session themselves (and must not be buffered by the proxy);
+  // the health check is public by design (it reveals nothing).
+  matcher: ["/((?!login|api/documents|api/health|_next/static|_next/image|favicon.ico).*)"],
 };

@@ -20,11 +20,18 @@ const TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_FAILED_LOGINS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
+/** Sessions that can no longer be used (past their maximum age, or idle too long) are deleted at each sign-in. */
+export async function purgeEndedSessions(now = Date.now()) {
+  const { count } = await db.session.deleteMany({ where: { OR: [{ expiresAt: { lte: new Date(now) } }, { lastSeenAt: { lte: new Date(now - IDLE_MS) } }] } });
+  return count;
+}
+
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
 export async function createSession(userId: string) {
+  await purgeEndedSessions();
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + MAX_AGE_MS);
   await db.session.create({ data: { tokenHash: hashToken(token), userId, expiresAt } });

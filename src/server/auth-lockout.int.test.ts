@@ -39,3 +39,17 @@ describe("sign-in lockout", () => {
     expect(await db.auditEvent.count({ where: { entityId: u.id, action: "auth.account_locked" } })).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("ended sessions", () => {
+  it("deletes sessions past their maximum age or idle too long, and keeps live ones", async () => {
+    const { purgeEndedSessions } = await import("@/server/auth/session");
+    const u = await db.user.findUniqueOrThrow({ where: { email: EMAIL } });
+    const now = Date.now();
+    const mk = (tokenHash: string, expiresAt: number, lastSeenAt: number) => db.session.create({ data: { userId: u.id, tokenHash, expiresAt: new Date(expiresAt), lastSeenAt: new Date(lastSeenAt) } });
+    await mk("expired", now - 1000, now - 1000);
+    await mk("idle", now + 3_600_000, now - 2 * 3_600_000);
+    await mk("live", now + 3_600_000, now - 60_000);
+    expect(await purgeEndedSessions(now)).toBe(2);
+    expect((await db.session.findMany()).map((s) => s.tokenHash)).toEqual(["live"]);
+  });
+});
