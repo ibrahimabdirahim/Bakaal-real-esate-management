@@ -1,4 +1,5 @@
 import { getActor } from "@/server/auth/session";
+import { errorFields, log } from "@/server/log";
 import { BusinessError } from "@/server/auth/actor";
 import { discardStaged, documentForDownload } from "@/server/services/documents";
 import { isSameOrigin } from "../same-origin";
@@ -9,7 +10,15 @@ export async function GET(request: Request, ctx: RouteContext<"/api/documents/[i
   const actor = await getActor();
   if (!actor) return new Response("Not signed in", { status: 401 });
   const { id } = await ctx.params;
-  const doc = await documentForDownload(actor, id).catch(() => null);
+  let doc: Awaited<ReturnType<typeof documentForDownload>>;
+  try {
+    doc = await documentForDownload(actor, id);
+  } catch (e) {
+    // The record exists and may be seen, but its file could not be read (storage down, file missing):
+    // say so and log it, instead of pretending the document does not exist.
+    log("error", "Document download failed", { documentId: id, ...errorFields(e) });
+    return new Response("The document could not be loaded right now. Please try again later.", { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
   if (!doc) return new Response("Not found", { status: 404 });
   const download = new URL(request.url).searchParams.get("download") === "1";
   const ascii = doc.name.replace(/[^\x20-\x7e]/g, "_");

@@ -25,7 +25,9 @@
     "db:check": "node scripts/check-integrity.mjs",
     "db:neon:check": "node scripts/neon.mjs check",
     "db:neon:status": "node scripts/neon.mjs status",
-    "db:neon:deploy": "node scripts/neon.mjs deploy"
+    "db:neon:deploy": "node scripts/neon.mjs deploy",
+    "storage:check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register.mjs scripts/storage-check.mts",
+    "test:storage-restart": "node scripts/test-storage-restart.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",

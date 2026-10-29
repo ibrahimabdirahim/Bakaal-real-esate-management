@@ -25,6 +25,12 @@ Check from this computer: `npm run db:neon:check` (read-only).
    **Secret Access Key** and the **S3 endpoint** (`https://<account-id>.r2.cloudflarestorage.com`) —
    the secret is shown once.
 3. Optional: R2 bucket → **Settings** → object lifecycle: none (documents are kept).
+4. **Prove it works before production uses it** (on this computer): put the five values in a git-ignored
+   file `.env.storage` in the project folder —
+   `DOCUMENT_STORAGE=s3`, `S3_ENDPOINT=…`, `S3_BUCKET=bakaal-documents`, `S3_ACCESS_KEY_ID=…`,
+   `S3_SECRET_ACCESS_KEY=…` (plus `S3_REGION=auto`) — then run `npm run storage:check`. It stores a test
+   file in the bucket, reads it back, compares it and deletes it, and prints only the bucket and host.
+   It must end with `STORAGE CHECK PASSED`. Delete `.env.storage` afterwards (the values live in Render).
 
 ### 1c. Render service settings
 
@@ -92,7 +98,9 @@ if it fails, nothing changes and it can be retried.
    `{"status":"ok","database":"ok","storage":"ok","storageKind":"s3","latestMigration":"20261029120000_billed_charges",...}`.
    `storage: "unwritable"` means the R2 settings are wrong (endpoint, bucket or key).
 2. Sign in; open Dashboard, Billing & Payments, Billing runs, Accounts, Units, Reports, Settings.
-3. Upload a test document to a record, open it, then remove it (removal keeps it for the audit trail).
+3. Upload a test document to a record and open it. Then **restart the service** (Render → Manual
+   Deploy → Restart service) and open it again: it must still open (files live in R2, not on the server).
+   Remove it afterwards (removal keeps it for the audit trail).
 4. Render → **Logs**: lines are JSON; search `"level":"error"`.
 
 ## 4. If something goes wrong
@@ -109,7 +117,8 @@ if it fails, nothing changes and it can be retried.
 
 - **Backups**: Neon keeps point-in-time history (plan-dependent window); before any future migration,
   create a backup branch (step 1). R2 objects are written once and never overwritten.
-- **Before each release**: the checks in step 0, then `npm run db:neon:status`.
+- **Before each release**: the checks in step 0, `npm run test:storage-restart` (documents survive an
+  app restart; uses a local test bucket and `bakaal_test`), then `npm run db:neon:status`.
 - **Monitoring**: Render health checks on `/api/health`; errors as JSON lines in the logs, and to
   `ERROR_ALERT_WEBHOOK_URL` when set.
 - **Scale**: measured 2026-10-29 at 2,880 invoices / 1,920 payments: invoice list ~100 ms, dashboard
