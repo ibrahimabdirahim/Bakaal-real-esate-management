@@ -1,4 +1,5 @@
 import { getActor } from "@/server/auth/session";
+import { errorFields, log } from "@/server/log";
 import { BusinessError, PermissionError } from "@/server/auth/actor";
 import { stageUpload, OWNER_RULES, CATEGORY_LABELS, type DocumentCategory, type DocumentOwner } from "@/server/services/documents";
 import { MAX_DOCUMENT_BYTES } from "@/server/storage";
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
   } catch (e) {
     if (e instanceof PermissionError) return Response.json({ error: "You do not have permission to add documents here." }, { status: 403 });
     if (e instanceof BusinessError) return Response.json({ error: e.message }, { status: 400 });
-    console.error("Document upload failed", e);
+    log("error", "Document upload failed", errorFields(e));
     return Response.json({ error: "The file could not be saved. Please try again." }, { status: 500 });
   }
 }

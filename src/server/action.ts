@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { ZodError, type z } from "zod";
 import { BusinessError, PermissionError, type Actor } from "@/server/auth/actor";
+import { errorFields, log } from "@/server/log";
 import { getActor } from "@/server/auth/session";
 import { describeDbError } from "@/server/services/common";
 import { formToObject } from "@/server/validation";
@@ -55,7 +56,7 @@ export async function runAction(fn: (actor: Actor) => Promise<ActionState | stri
     if (e instanceof BusinessError || e instanceof PermissionError) return { error: e.message };
     const known = describeDbError(e);
     if (known) return { error: known };
-    console.error("Unexpected action error", e);
+    log("error", "Unexpected action error", errorFields(e));
     return { error: "Something went wrong and the change was not saved. Please try again." };
   }
 }

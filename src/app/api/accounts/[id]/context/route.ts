@@ -1,4 +1,5 @@
 import { getActor } from "@/server/auth/session";
+import { errorFields, log } from "@/server/log";
 import { PermissionError } from "@/server/auth/actor";
 import { accountContext } from "@/server/services/property";
 import { accountBalance } from "@/server/services/finance";
@@ -20,7 +21,7 @@ export async function GET(request: Request, ctx: RouteContext<"/api/accounts/[id
     return Response.json({ ...result, balance }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     if (e instanceof PermissionError) return Response.json({ error: "You do not have permission to see this account's agreements." }, { status: 403 });
-    console.error("Account lookup failed", e);
+    log("error", "Account lookup failed", errorFields(e));
     return Response.json({ error: "The account's details could not be loaded." }, { status: 500 });
   }
 }
