@@ -4,7 +4,9 @@ import { Bell, FileText, Plus, Receipt, Scale, Users, Wallet } from "lucide-reac
 import { AccountBanner } from "../finance/account-banner";
 import { RowActions, type RowAction } from "@/components/row-actions";
 import { invoiceActions } from "../finance/record-actions";
+import { Suspense } from "react";
 import { requirePage } from "@/server/auth/session";
+import { PageSkeleton } from "@/components/page-skeleton";
 import { can } from "@/server/auth/permissions";
 import type { Actor } from "@/server/auth/actor";
 import { billingSummary, INVOICE_SORTS, listCreditNotes, listInvoices, type InvoiceFilter, type InvoiceListFilter, type InvoiceSort } from "@/server/services/finance";
@@ -53,9 +55,18 @@ function moreActions(actor: Actor, month: string, periodQuery: string): RowActio
   return items;
 }
 
+/** The permission check runs first (a refused visitor is still redirected); the lists then stream in. */
 export default async function InvoicesPage({ searchParams }: PageProps<"/invoices">) {
   const actor = await requirePage("invoices.view");
   const sp = await searchParams;
+  return (
+    <Suspense fallback={<PageSkeleton title="Billing & Payments" />}>
+      <Invoices actor={actor} sp={sp} />
+    </Suspense>
+  );
+}
+
+async function Invoices({ actor, sp }: { actor: Actor; sp: Record<string, string | string[] | undefined> }) {
   const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string).trim() : "");
   const today = todayISO();
   const current = monthStart(today);

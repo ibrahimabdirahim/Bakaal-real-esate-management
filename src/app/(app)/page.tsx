@@ -26,7 +26,10 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import { Suspense } from "react";
 import { requirePage } from "@/server/auth/session";
+import type { Actor } from "@/server/auth/actor";
+import { PageSkeleton } from "@/components/page-skeleton";
 import { can } from "@/server/auth/permissions";
 import { dashboard, DASHBOARD_PERIODS, EXPIRING_SOON_DAYS, type ActivityItem } from "@/server/services/reports";
 import { EARLIEST_DATE, monthLabel, periodQuery, resolveDashboardPeriod, type ResolvedPeriod } from "@/lib/dashboard-period";
@@ -248,12 +251,24 @@ const QUICK_TONES = {
   red: "border-red-100 bg-red-50/60 [&_.qa-icon]:bg-red-500",
 } as const;
 
+/**
+ * The sign-in and permission check runs first, so a refused visitor is still redirected before anything
+ * is sent; the figures then stream in, with a placeholder while they load.
+ */
 export default async function DashboardPage({ searchParams }: PageProps<"/">) {
   const actor = await requirePage("dashboard.view");
+  const sp = await searchParams;
+  return (
+    <Suspense fallback={<PageSkeleton title="Dashboard" />}>
+      <Dashboard actor={actor} sp={sp} />
+    </Suspense>
+  );
+}
+
+async function Dashboard({ actor, sp }: { actor: Actor; sp: Record<string, string | string[] | undefined> }) {
   const [building, buildings] = await Promise.all([findBuilding(), listBuildings()]);
   if (!building) return <NoBuilding actor={actor} title="Building dashboard" />;
 
-  const sp = await searchParams;
   const today = todayISO();
   const p = resolveDashboardPeriod(sp, today);
   const period = p.period;
