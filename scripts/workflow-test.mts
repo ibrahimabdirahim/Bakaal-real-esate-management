@@ -101,6 +101,28 @@ try {
   const bad = await login("manager@workflow.test", "wrong-password-123");
   check("wrong password is rejected", !bad.cookie && bad.html.includes("Incorrect e-mail or password"));
 
+  // Failed sign-ins per network address (audit 2026-10-29): 30 failures block that address only.
+  const signInPage = (await getPage("/login", "")).html;
+  const tryFrom = async (address: string, email: string, password: string) => {
+    const fd = new FormData();
+    for (const [k, v] of findForm(signInPage, 'name="email"')) fd.append(k, v);
+    fd.append("email", email);
+    fd.append("password", password);
+    const res = await fetch(`${BASE}/login`, { method: "POST", body: fd, headers: { "x-forwarded-for": address }, redirect: "manual" });
+    return { status: res.status, html: res.status === 200 ? await res.text() : "" };
+  };
+  for (let i = 0; i < 30; i++) await tryFrom("203.0.113.9", "nobody@workflow.test", "wrong-password-123");
+  const addressBlocked = await tryFrom("203.0.113.9", "manager@workflow.test", PASSWORD);
+  const otherAddress = await tryFrom("198.51.100.7", "manager@workflow.test", PASSWORD);
+  check(
+    "30 failed sign-ins from one network address block that address, even with the right password; another address still signs in",
+    addressBlocked.html.includes("Too many failed sign-ins from this network") && otherAddress.status === 303,
+    `${addressBlocked.status} / ${otherAddress.status}`,
+  );
+  const health = await fetch(`${BASE}/api/health`, { redirect: "manual" });
+  const healthBody = health.status === 200 ? await health.json() : null;
+  check("the health check answers without a session: database ok and the latest migration applied", health.status === 200 && healthBody?.status === "ok" && healthBody?.latestMigration === "20261029120000_billed_charges", JSON.stringify(healthBody));
+
   const manager = await login("manager@workflow.test");
   check("manager signs in", !!manager.cookie && manager.status === 303);
   const finance = (await login("finance@workflow.test")).cookie;
