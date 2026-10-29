@@ -121,12 +121,13 @@ async function redactSalaryEvents(actor: Actor, events: AuditRow[]): Promise<Aud
   );
 }
 
-export async function listAuditEvents(actor: Actor, filter: { entityType?: string; q?: string; page?: number }) {
+export async function listAuditEvents(actor: Actor, filter: { entityType?: string; entityId?: string; q?: string; page?: number }) {
   requirePermission(actor, "audit.view");
   const take = 50;
   const page = Math.max(1, filter.page ?? 1);
   const where = {
     ...(filter.entityType ? { entityType: filter.entityType } : {}),
+    ...(filter.entityId ? { entityId: filter.entityId } : {}),
     ...(filter.q
       ? { OR: [{ summary: { contains: filter.q, mode: "insensitive" as const } }, { actorEmail: { contains: filter.q, mode: "insensitive" as const } }, { action: { contains: filter.q } }] }
       : {}),

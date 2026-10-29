@@ -92,7 +92,7 @@ function parseCharges(form: FormData) {
 
 function submittedValues(form: FormData): Record<string, string> {
   const charges = chargeRowsOf(form).flatMap((i) => ["Category", "Description", "Amount", "From", "To"].map((k) => `charge${i}${k}`));
-  return Object.fromEntries([...FORM_FIELDS, ...TYPE_FIELDS, ...charges].map((k) => [k, String(form.get(k) ?? "")]));
+  return Object.fromEntries([...FORM_FIELDS, ...TYPE_FIELDS, ...charges, "billNow"].map((k) => [k, String(form.get(k) ?? "")]));
 }
 
 /** Runs a save; a duplicate becomes an error that names the matching accounts and keeps the entered values. */
@@ -128,6 +128,7 @@ async function saveParty(form: FormData, save: (actor: Actor) => Promise<unknown
  */
 export async function createPartyAction(_: ActionState, form: FormData): Promise<ActionState> {
   let id = "";
+  let billed = "off";
   const state = await saveParty(form, async (actor) => {
     // Every section is checked before anything is reported, so all invalid fields are shown together.
     const issues: z.core.$ZodIssue[] = [];
@@ -155,6 +156,7 @@ export async function createPartyAction(_: ActionState, form: FormData): Promise
       unitId: kind!.unitId,
       charges: charges!,
       documents: { account: ids("documentIds"), agreement: ids("agreementDocumentIds"), management: ids("managementDocumentIds") },
+      billNow: form.get("billNow") === "on",
     };
     if (tenancy) {
       const t = tenancy;
@@ -168,10 +170,12 @@ export async function createPartyAction(_: ActionState, form: FormData): Promise
       const m = management;
       input.management = { startDate: m.mgmtStartDate, endDate: m.mgmtEndDate, managementFeeAmount: m.managementFee, dueDay: m.mgmtDueDay, graceDays: m.mgmtGraceDays, reference: m.mgmtReference, notes: m.mgmtNotes };
     }
-    id = (await createAccount(actor, input)).party.id;
+    const created = await createAccount(actor, input);
+    id = created.party.id;
+    billed = created.firstBilling ? String(created.firstBilling.invoices.length) : input.billNow ? "not-permitted" : "off";
   });
   if (!id) return state;
-  finish(`/accounts/${id}?created=1`);
+  finish(`/accounts/${id}?created=1&billing=${billed}`);
 }
 
 export async function updatePartyAction(id: string, _: ActionState, form: FormData): Promise<ActionState> {

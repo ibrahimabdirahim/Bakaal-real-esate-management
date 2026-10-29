@@ -15,7 +15,7 @@ export function assertTestDatabase() {
 export async function resetTestData() {
   assertTestDatabase();
   await db.$executeRawUnsafe(`TRUNCATE TABLE
-    "PaymentAllocation", "Payment", "CreditNote", "InvoiceLine", "Invoice", "BillingRun",
+    "PaymentAllocation", "Payment", "CreditNote", "BilledCharge", "InvoiceLine", "Invoice", "BillingRun",
     "AgreementCharge", "Agreement", "BuildingPolicy", "Expense", "StaffTask", "StaffMember",
     "WorkOrder", "Unit", "Party", "Session", "User", "Building", "DocumentSequence", "Document" CASCADE`);
   // Test uploads live in their own folder (see src/server/storage.ts); never the real documents.

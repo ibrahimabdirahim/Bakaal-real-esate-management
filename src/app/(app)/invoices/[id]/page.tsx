@@ -9,14 +9,14 @@ import { Badge, Card, DescriptionList, Money, Notice, PageHeader, Table, Td } fr
 import { ActionForm, DeleteButton, SubmitButton, TextInput } from "@/components/forms";
 import { SelfApprovalForm } from "@/components/self-approval-form";
 import { canUseSelfException, SELF_EXCEPTION_MIN_REASON } from "@/server/services/self-approval";
-import { PrintButton } from "@/components/print-button";
+import { AutoPrint, PrintButton } from "@/components/print-button";
 import { formatDate, formatDateTime, formatMonth } from "@/lib/dates";
 import { CHARGE_CATEGORY_LABELS } from "../../agreements/labels";
 import { InvoiceStatusBadge } from "../badges";
 import { creditNoteAction, discardDraftAction, issueManualInvoiceAction } from "../actions";
 import { FileText } from "lucide-react";
 
-export default async function InvoicePage({ params }: PageProps<"/invoices/[id]">) {
+export default async function InvoicePage({ params, searchParams }: PageProps<"/invoices/[id]">) {
   const actor = await requirePage("invoices.view");
   const { id } = await params;
   const data = await getInvoice(actor, id);
@@ -47,6 +47,7 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
         description={<InvoiceStatusBadge s={s} />}
         actions={!isDraft ? <PrintButton /> : null}
       />
+      {!isDraft && (await searchParams).print === "1" && <AutoPrint />}
 
       {isDraft && (
         <div className="no-print mb-6">
@@ -106,7 +107,7 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
       </Card>
 
       {!isDraft && (
-        <Card title="Payments allocated to this invoice" className="mt-6">
+        <Card title="Payments allocated to this invoice" id="payments" className="mt-6 scroll-mt-20">
           <Table head={["Receipt", "Payment reference", "Allocated on", "Amount", "Status"]} empty="No payments allocated yet.">
             {inv.allocations.map((a) => (
               <tr key={a.id} className={a.reversedAt ? "text-slate-400 line-through" : ""}>

@@ -14,16 +14,19 @@ export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
   const actor = await requirePage("audit.view");
   const sp = await searchParams;
   const entityType = typeof sp.entityType === "string" ? sp.entityType : "";
+  // One record's history (e.g. an invoice's "View audit history").
+  const entityId = typeof sp.entityId === "string" && /^[a-z0-9_-]{1,64}$/i.test(sp.entityId) ? sp.entityId : "";
   const q = typeof sp.q === "string" ? sp.q : "";
   const page = Number(typeof sp.page === "string" ? sp.page : 1) || 1;
-  const { events, linkable, total, pages } = await listAuditEvents(actor, { entityType, q, page });
-  const qs = (p: number) => `?${new URLSearchParams({ entityType, q, page: String(p) })}`;
+  const { events, linkable, total, pages } = await listAuditEvents(actor, { entityType, entityId, q, page });
+  const qs = (p: number) => `?${new URLSearchParams({ entityType, ...(entityId ? { entityId } : {}), q, page: String(p) })}`;
 
   return (
     <>
       <PageHeader icon={History} title="Audit log" description="Append-only record of important actions. Entries cannot be edited or deleted, including by administrators." />
       <Card>
         <FilterBar>
+          {entityId && <input type="hidden" name="entityId" value={entityId} />}
           <FilterSelect label="Record type" name="entityType" defaultValue={entityType} options={ENTITY_TYPES.map((t) => ({ value: t, label: t || "All" }))} />
           <FilterInput label="Search" name="q" defaultValue={q} placeholder="Summary, user or action" />
           <FilterSubmit />

@@ -4,6 +4,7 @@ import {
   Banknote,
   BarChart3,
   Bell,
+  Plus,
   Building2,
   CalendarClock,
   ChevronDown,
@@ -37,7 +38,7 @@ import { ButtonLink, Card, EmptyState, Notice, PageHeader } from "@/components/u
 import { CHART_COLORS, GroupedBarChart, Legend, RingChart } from "@/components/charts";
 import { AGEING_BUCKETS } from "@/server/ledger";
 import { formatMoney } from "@/lib/money";
-import { formatDate, formatDateTime, formatMonth, monthStart, todayISO } from "@/lib/dates";
+import { addDays, formatDate, formatDateTime, formatMonth, monthEnd, monthStart, todayISO } from "@/lib/dates";
 
 export const metadata = { title: "Dashboard" };
 
@@ -94,42 +95,72 @@ function PeriodMenu({ p, from, to, today }: { p: ResolvedPeriod; from: string; t
 }
 
 /**
- * Building selector. The services report on the whole installation (getBuilding = the first building), so
- * there is no per-building filtering: with one building it is shown as selected; with several, the list is
- * shown but not switchable rather than pretending the figures change.
+ * The building and its units (F66). The services report on the whole installation (getBuilding = the first
+ * building), so there is no per-building switching; with several buildings a note says so. The whole card
+ * opens the unit register; with no units it offers Add unit instead.
  */
-function BuildingSelector({ buildings, current, summary }: { buildings: { id: string; name: string; address: string | null }[]; current: { id: string; name: string; address: string | null }; summary: string | null }) {
-  const several = buildings.length > 1;
+function BuildingCard({ building, buildings, stats, canAddUnit }: { building: { name: string; address: string | null }; buildings: number; stats: { registered: number; inUse: number; occupied: number; vacant: number; retired: number } | null; canAddUnit: boolean }) {
+  const body = (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><Building2 className="size-[18px]" aria-hidden /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs text-muted">Building</span>
+        <span className="block truncate font-semibold text-ink">{building.address ? `${building.name} — ${building.address}` : building.name}</span>
+      </span>
+      {stats && stats.registered > 0 && (
+        <span className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted sm:ml-auto" data-building-units>
+          <span><strong className="text-ink tabular-nums">{stats.registered}</strong> registered</span>
+          <span><strong className="text-ink tabular-nums">{stats.inUse}</strong> to let or hold</span>
+          <span><strong className="text-ink tabular-nums">{stats.occupied}</strong> occupied</span>
+          <span><strong className="text-ink tabular-nums">{stats.vacant}</strong> vacant</span>
+          {stats.retired > 0 && <span><strong className="text-ink tabular-nums">{stats.retired}</strong> retired</span>}
+        </span>
+      )}
+      {stats && stats.registered > 0 && <ChevronRight className="size-4 shrink-0 text-slate-400 group-hover:text-primary-600" aria-hidden />}
+    </div>
+  );
+  const note = buildings > 1 && <p className="mt-2 text-xs text-amber-800">{`${buildings} buildings are registered, but figures are not yet split by building: they cover the whole installation.`}</p>;
+  const box = "mb-6 block rounded-[var(--radius-card)] border border-line bg-white px-5 py-3.5 shadow-[var(--shadow-card)]";
+  if (stats && stats.registered > 0) {
+    return (
+      <Link href="/units" data-building aria-label={`${building.name}: ${stats.registered} units registered, ${stats.occupied} occupied, ${stats.vacant} vacant. Open the unit register`} className={`group ${box} transition hover:border-primary-200 hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:outline-none`}>
+        {body}
+        {note}
+      </Link>
+    );
+  }
   return (
-    <section aria-label="Building" className="mb-6 rounded-[var(--radius-card)] border border-line bg-white px-5 py-3.5 shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <label htmlFor="building" className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-          <Building2 className="size-[18px]" aria-hidden />
-          <span className="sr-only">Building</span>
-        </label>
-        <div className="relative min-w-0 flex-1 sm:max-w-md">
-          <span className="block text-xs text-muted" aria-hidden>Building</span>
-          <select
-            id="building"
-            defaultValue={current.id}
-            disabled
-            aria-describedby="building-note"
-            className="w-full appearance-none truncate rounded-md bg-transparent py-0.5 pr-7 font-semibold text-ink disabled:opacity-100"
-          >
-            {buildings.map((b) => (
-              <option key={b.id} value={b.id}>{b.address ? `${b.name} — ${b.address}` : b.name}</option>
-            ))}
-          </select>
-          {several && <ChevronDown className="pointer-events-none absolute right-1 bottom-1.5 size-4 text-muted" aria-hidden />}
+    <section aria-label="Building" data-building className={box}>
+      {body}
+      {stats && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3 text-sm text-muted">
+          <span>No units are registered yet.</span>
+          {canAddUnit ? <ButtonLink href="/units/new" icon={Plus}>Add unit</ButtonLink> : <span>Ask an administrator or building manager to register them.</span>}
         </div>
-        {summary && <span className="text-sm text-muted sm:ml-auto">{summary}</span>}
-      </div>
-      <p id="building-note" className={several ? "mt-2 text-xs text-amber-800" : "sr-only"}>
-        {several
-          ? `${buildings.length} buildings are registered, but figures are not yet split by building: they cover the whole installation.`
-          : "The only building registered; all figures are for this building."}
-      </p>
+      )}
+      {note}
     </section>
+  );
+}
+
+/** A figure that opens the list behind it (the whole tile is the link). */
+function FigureLink({ href, label, value, note, tone }: { href: string; label: string; value: string; note: string; tone: string }) {
+  return (
+    <Link href={href} className="group block rounded-lg bg-surface px-4 py-3 transition hover:bg-primary-50 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:outline-none">
+      <span className="flex items-center justify-between gap-2 text-xs text-muted">{label}<ChevronRight className="size-3.5 text-slate-400 group-hover:text-primary-600" aria-hidden /></span>
+      <span className={`mt-0.5 block text-xl font-bold tabular-nums ${tone}`}>{value}</span>
+      <span className="block text-xs text-muted">{note}</span>
+    </Link>
+  );
+}
+
+/** A figure row in a panel; a link when there is a list behind it. */
+function Row({ label, value, href, tone = "text-ink", small = false }: { label: string; value: string; href?: string; tone?: string; small?: boolean }) {
+  return (
+    <div className={`flex justify-between gap-3 ${small ? "text-xs" : ""}`}>
+      <dt>{href ? <Link href={href} className="text-muted hover:text-primary-700 hover:underline">{label}</Link> : <span className="text-muted">{label}</span>}</dt>
+      <dd className={`${small ? "" : "font-semibold"} text-right whitespace-nowrap tabular-nums ${tone}`}>{value}</dd>
+    </div>
   );
 }
 
@@ -238,15 +269,21 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
   const occupancyPct = d.totalUnits > 0 ? Math.round((d.occupied / d.totalUnits) * 1000) / 10 : null;
   const occupiedBreakdown = OCCUPIED_KINDS.filter((k) => d.occupancyCounts[k] > 0).map((k) => `${d.occupancyCounts[k]} ${OCCUPANCY_LABELS[k].toLowerCase()}`);
   const ratePct = m?.collectionRate == null ? null : Math.floor(m.collectionRate * 1000) / 10;
-  const balancesHref = can(actor.role, "reports.financial") ? "/reports/arrears" : "/invoices?status=OPEN";
+  const balancesHref = can(actor.role, "reports.financial") ? "/reports/arrears" : "/invoices?status=OPEN&period=all";
+  const canPayments = can(actor.role, "payments.view");
+  // One arrears band's invoices: the arrears report filtered to the band, or the past-due invoice list.
+  const bandHref = (b: string) => (can(actor.role, "reports.financial") ? `/reports?report=arrears&bucket=${encodeURIComponent(b)}&run=1` : b === "Not yet due" ? "/invoices?status=OPEN&period=all" : "/invoices?status=PAST_DUE&period=all");
 
   const actions = [
     can(actor.role, "invoices.create_manual") && { label: "Create invoice", href: "/invoices/new", icon: FilePlus2, tone: "amber" as const },
     can(actor.role, "payments.record") && { label: "Record payment", href: "/payments/new", icon: Wallet, tone: "navy" as const },
     can(actor.role, "workorders.manage") && { label: "New maintenance request", href: "/maintenance/new", icon: Wrench, tone: "red" as const },
     (can(actor.role, "reports.operational") || can(actor.role, "reports.financial")) && { label: "View reports", href: "/reports", icon: BarChart3, tone: "blue" as const },
-    can(actor.role, "accounts.manage") && { label: "Add account", href: "/accounts/new", icon: UserPlus, tone: "green" as const },
+    can(actor.role, "accounts.manage") && { label: "Add tenant or owner (account)", href: "/accounts/new", icon: UserPlus, tone: "green" as const },
     can(actor.role, "expenses.submit") && { label: "Record expense", href: "/expenses/new", icon: Receipt, tone: "violet" as const },
+    can(actor.role, "units.manage") && { label: "Add unit", href: "/units/new", icon: Building2, tone: "navy" as const },
+    can(actor.role, "billing.preview") && { label: "Run monthly billing", href: "/billing", icon: CalendarClock, tone: "amber" as const },
+    can(actor.role, "notices.view") && { label: "Prepare reminders", href: "/notices", icon: Bell, tone: "blue" as const },
   ].filter((x) => !!x);
 
   const extraAttention = d.pending.filter((p) => p.key in EXTRA_ATTENTION);
@@ -262,7 +299,12 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
         </div>
       )}
 
-      <BuildingSelector buildings={buildings} current={building} summary={canUnits ? `${d.totalUnits + d.unavailableUnits} units registered · ${d.totalUnits} available to let or hold` : null} />
+      <BuildingCard
+        building={building}
+        buildings={buildings.length}
+        stats={canUnits ? { registered: d.totalUnits + d.unavailableUnits, inUse: d.totalUnits, occupied: d.occupied, vacant: d.vacant, retired: d.unavailableUnits } : null}
+        canAddUnit={can(actor.role, "units.manage")}
+      />
 
       {/* Unpaid tenant and owner balances: amounts owed (receivables), not cash. */}
       {m && (
@@ -280,20 +322,14 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
             </span>
           }
         >
-          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-balance-figures>
             {[
-              { label: "Billed before this month", value: m.outstandingBroughtForward, note: "still owed", tone: "text-red-600" },
-              { label: `Billed in ${thisMonth}`, value: m.outstandingThisMonth, note: "still owed", tone: "text-ink" },
-              { label: "Total outstanding", value: m.outstanding, note: `${formatMoney(m.pastDue)} past due`, tone: "text-ink" },
-              ...(d.unallocatedAmount != null ? [{ label: "Unallocated verified payments", value: d.unallocatedAmount, note: "received, not yet applied to invoices", tone: "text-emerald-700" }] : []),
-            ].map((x) => (
-              <div key={x.label} className="rounded-lg bg-surface px-4 py-3">
-                <dt className="text-xs text-muted">{x.label}</dt>
-                <dd className={`mt-0.5 text-xl font-bold tabular-nums ${x.tone}`}>{formatMoney(x.value)}</dd>
-                <dd className="text-xs text-muted">{x.note}</dd>
-              </div>
-            ))}
-          </dl>
+              { label: "Billed before this month", value: m.outstandingBroughtForward, note: "still owed", tone: "text-red-600", href: `/invoices?status=OPEN&to=${addDays(monthStart(today), -1)}` },
+              { label: `Billed in ${thisMonth}`, value: m.outstandingThisMonth, note: "still owed", tone: "text-ink", href: `/invoices?status=OPEN&from=${monthStart(today)}&to=${monthEnd(monthStart(today))}` },
+              { label: "Total outstanding", value: m.outstanding, note: `${formatMoney(m.pastDue)} past due`, tone: "text-ink", href: "/invoices?status=OPEN&period=all" },
+              ...(d.unallocatedAmount != null ? [{ label: "Unallocated verified payments", value: d.unallocatedAmount, note: "received, not yet applied to invoices", tone: "text-emerald-700", href: "/payments?unallocated=1" }] : []),
+            ].map((x) => <FigureLink key={x.label} href={x.href} label={x.label} value={formatMoney(x.value)} note={x.note} tone={x.tone} />)}
+          </div>
         </Card>
       )}
 
@@ -317,10 +353,10 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
                 ]}
               />
               <dl className="w-full space-y-2 text-sm">
-                <div className="flex justify-between gap-3"><dt className="text-muted">Billed</dt><dd className="font-semibold text-ink tabular-nums">{formatMoney(m.billed)}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-muted">Verified payments</dt><dd className="font-semibold text-emerald-700 tabular-nums">{formatMoney(m.collected)}</dd></div>
-                {m.reversed > 0 && <div className="flex justify-between gap-3 text-xs"><dt className="text-muted">of which reversed in the period</dt><dd className="text-red-600 tabular-nums">−{formatMoney(m.reversed)}</dd></div>}
-                <div className="flex justify-between gap-3"><dt className="text-muted">Pending verification</dt><dd className="font-semibold text-amber-700 tabular-nums">{formatMoney(d.pendingPaymentsAmount ?? 0)}</dd></div>
+                <Row label="Billed" value={formatMoney(m.billed)} href={`/invoices?${range}`} />
+                <Row label="Verified payments (net)" value={formatMoney(m.collected)} tone="text-emerald-700" href={canPayments ? `/payments?status=VERIFIED&${range}` : undefined} />
+                {m.reversed > 0 && <Row small label="of which reversed in the period" value={`−${formatMoney(m.reversed)}`} tone="text-red-600" href={canPayments ? "/payments?status=REVERSED" : undefined} />}
+                <Row label="Pending verification (not counted)" value={formatMoney(d.pendingPaymentsAmount ?? 0)} tone="text-amber-700" href={canPayments ? "/payments?status=PENDING" : undefined} />
                 <div className="flex justify-between gap-3 border-t border-line pt-2"><dt className="text-muted">Collection rate</dt><dd className="font-semibold text-ink tabular-nums">{ratePct == null ? "—" : `${ratePct}%`}</dd></div>
                 <p className="text-xs text-muted">{ratePct == null ? "Nothing billed in the period" : "Paid towards the period's invoices ÷ billed"}</p>
                 {can(actor.role, "payments.record") && (
@@ -339,7 +375,10 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
             actions={<CardLink href="/units">View units</CardLink>}
           >
             {d.totalUnits === 0 ? (
-              <EmptyState icon={Building2}>No units are registered yet, so there is no occupancy to show.</EmptyState>
+              <EmptyState icon={Building2}>
+                {d.unavailableUnits > 0 ? "Every registered unit is retired, so there is no occupancy to show." : "No units are registered yet, so there is no occupancy to show."}
+                {can(actor.role, "units.manage") && <span className="mt-3 block"><ButtonLink href="/units/new" icon={Plus}>Add unit</ButtonLink></span>}
+              </EmptyState>
             ) : (
               <div className="flex flex-col items-center gap-6 sm:flex-row">
                 <RingChart
@@ -352,11 +391,18 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
                   ]}
                 />
                 <dl className="w-full space-y-2 text-sm">
-                  <div className="flex justify-between gap-3"><dt><Link href="/units" className="text-muted hover:underline">Occupied</Link></dt><dd className="font-semibold text-ink tabular-nums">{d.occupied}</dd></div>
-                  <div className="flex justify-between gap-3"><dt><Link href="/units?occupancy=VACANT" className="text-muted hover:underline">Vacant</Link></dt><dd className="font-semibold text-ink tabular-nums">{d.vacant}</dd></div>
-                  <div className="flex justify-between gap-3 border-t border-line pt-2"><dt className="text-muted">Units available to let or hold</dt><dd className="font-semibold text-ink tabular-nums">{d.totalUnits}</dd></div>
-                  {d.unavailableUnits > 0 && <div className="flex justify-between gap-3 text-xs"><dt className="text-muted">Retired (not counted)</dt><dd className="text-muted tabular-nums">{d.unavailableUnits}</dd></div>}
-                  {occupiedBreakdown.length > 0 && <p className="text-xs text-muted">{`Occupied: ${occupiedBreakdown.join(" · ")}`}</p>}
+                  <Row label="Occupied" value={String(d.occupied)} href="/units?occupancy=OCCUPIED" />
+                  <Row label="Vacant" value={String(d.vacant)} href="/units?occupancy=VACANT" />
+                  <div className="border-t border-line pt-2"><Row label="Units available to let or hold" value={String(d.totalUnits)} href="/units" /></div>
+                  {d.unavailableUnits > 0 && <Row small label="Retired (not counted)" value={String(d.unavailableUnits)} tone="text-muted" href="/units?occupancy=RETIRED" />}
+                  {occupiedBreakdown.length > 0 && (
+                    <p className="text-xs text-muted">
+                      {"Occupied: "}
+                      {OCCUPIED_KINDS.filter((k) => d.occupancyCounts[k] > 0).map((k, i) => (
+                        <span key={k}>{i > 0 && " · "}<Link href={`/units?occupancy=${k}`} className="hover:underline">{`${d.occupancyCounts[k]} ${OCCUPANCY_LABELS[k].toLowerCase()}`}</Link></span>
+                      ))}
+                    </p>
+                  )}
                   {can(actor.role, "accounts.manage") && (
                     <div className="pt-2"><ButtonLink href="/accounts/new" icon={UserPlus}>Add account</ButtonLink></div>
                   )}
@@ -377,13 +423,16 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
               ) : (
                 <>
                   <p className="mb-3 text-sm text-muted">
-                    <strong className="text-ink">{m.accountsInArrears}</strong> account{m.accountsInArrears === 1 ? "" : "s"} past due · <strong className="text-red-600">{formatMoney(m.pastDue)}</strong> past due of {formatMoney(m.outstanding)} outstanding
+                    <strong className="text-ink">{m.accountsInArrears}</strong> account{m.accountsInArrears === 1 ? "" : "s"} past due ·{" "}
+                    <Link href="/invoices?status=PAST_DUE&period=all" className="hover:underline"><strong className="text-ink">{m.overdueInvoices}</strong> invoice{m.overdueInvoices === 1 ? "" : "s"}</Link> ·{" "}
+                    <strong className="text-red-600">{formatMoney(m.pastDue)}</strong> past due of {formatMoney(m.outstanding)} outstanding
+                    {m.oldestDue && ` · oldest due ${formatDate(m.oldestDue)}`}
                   </p>
                   {/* One row per existing ageing band; the bar is the band's share of the total outstanding. */}
                   <ul className="divide-y divide-line">
                     {AGEING_BUCKETS.map((b, i) => (
                       <li key={b} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 py-2.5 sm:grid-cols-[9rem_minmax(0,1fr)_9rem]">
-                        <span className="flex items-center gap-2 text-sm text-ink"><span className="size-2.5 shrink-0 rounded-sm" style={{ background: AGEING_COLORS[i] }} aria-hidden />{b}</span>
+                        <Link href={bandHref(b)} className="flex items-center gap-2 text-sm text-ink hover:text-primary-700 hover:underline"><span className="size-2.5 shrink-0 rounded-sm" style={{ background: AGEING_COLORS[i] }} aria-hidden />{b}</Link>
                         <span className="col-span-2 row-start-2 h-2 overflow-hidden rounded-full bg-slate-100 sm:col-span-1 sm:row-start-auto" aria-hidden>
                           <span className="block h-full rounded-full" style={{ width: `${(m.ageing[b] / m.outstanding) * 100}%`, background: AGEING_COLORS[i] }} />
                         </span>
@@ -394,6 +443,19 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
                       </li>
                     ))}
                   </ul>
+                  {m.topArrears.length > 0 && (
+                    <div className="mt-4 border-t border-line pt-3" data-top-arrears>
+                      <p className="mb-2 text-xs font-semibold text-muted">Most past due</p>
+                      <ul className="space-y-1.5 text-sm">
+                        {m.topArrears.map((a) => (
+                          <li key={a.partyId} className="flex flex-wrap items-baseline justify-between gap-x-3">
+                            <Link href={`/invoices?partyId=${a.partyId}&status=PAST_DUE&period=all`} className="font-medium text-primary-600 hover:underline">{a.name}</Link>
+                            <span className="text-muted tabular-nums">{`${a.invoices} invoice${a.invoices === 1 ? "" : "s"} · since ${formatDate(a.oldestDue)} · `}<strong className="text-red-600">{formatMoney(a.pastDue)}</strong></span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </>
               )}
             </Card>
@@ -473,12 +535,6 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
       )}
 
       {!m && <p className="mt-6 text-xs text-muted">Financial figures are shown only to roles with access to invoices or financial reports.</p>}
-      {m && (
-        <p className="mt-6 text-xs text-muted">
-          Unpaid balances and arrears are amounts owed by tenants and owners, not cash. Verified payments = money received in the period less payments reversed in it (each on its own date); not a bank balance. Occupancy = occupied units ÷ units
-          available to let or hold.
-        </p>
-      )}
     </>
   );
 }

@@ -152,7 +152,7 @@ try {
   check(
     "the dashboard shows the building, unpaid balances, payments with collection rate, occupancy, arrears and more actions in order",
     (() => {
-      const order = ['aria-label="Building"', ">Unpaid Tenant Balance (KES)<", "Collection rate", ">Occupancy<", "Arrears overview (KES)", "More actions", "Recent activity"].map((t) => capacityDash.html.indexOf(t));
+      const order = ["data-building", ">Unpaid Tenant Balance (KES)<", "Collection rate", ">Occupancy<", "Arrears overview (KES)", "More actions", "Recent activity"].map((t) => capacityDash.html.indexOf(t));
       return order.every((p, i) => p > 0 && (i === 0 || p > order[i - 1])) && capacityDash.html.includes("Amounts owed, not cash");
     })(),
   );
@@ -188,7 +188,7 @@ try {
   const created = await getPage(party2.location, M);
   check(
     "new account shows a clear confirmation with next steps",
-    party2.location.endsWith("?created=1") && created.html.includes("Account created successfully") && created.html.includes("Back to Accounts register") && created.html.includes("Add another account"),
+    party2.location.includes("?created=1&billing=") && created.html.includes("Account created successfully") && created.html.includes("Back to Accounts register") && created.html.includes("Add another account"),
   );
   check("the account page is clearly an edit of the existing account", created.html.includes("Edit account details") && created.html.includes("it does not create a new account"));
   check("the confirmation is not repeated on later visits", !(await getPage(`/accounts/${partyId}`, M)).html.includes("Account created successfully"));
@@ -320,9 +320,14 @@ try {
   const replay = await submit(`/billing?month=${start}`, ops, " invoice(s) for", {}, billingFinance.html);
   check("operations cannot issue billing by replaying the form (server-side check)", replay.html.includes("permission") || replay.status === 307, `${replay.status}`);
   const issue = await submit(`/billing?month=${start}`, finance, " invoice(s) for", {}, billingFinance.html);
-  check("finance issues the month's invoice", issue.html.includes("Issued 1 invoice"));
+  const runReport = issue.status === 303 ? await getPage(issue.location.replace(BASE, ""), finance) : { html: "" };
+  check(
+    "finance issues the month's invoice; the run report shows what was created and skipped",
+    issue.status === 303 && issue.location.includes("/billing?run=") && runReport.html.includes("Completed: 1 invoice(s) issued") && runReport.html.includes(">Already billed (skipped)<") && runReport.html.includes(">Failed<"),
+    `${issue.status} ${issue.location}`,
+  );
   const again = await getPage(`/billing?month=${start}`, finance);
-  check("re-running the month offers nothing new", again.html.includes("already invoiced for") && !again.html.includes(" invoice(s) for"));
+  check("re-running the month offers nothing new: the charges are listed as already billed", again.html.includes("Already billed for this month — skipped") && !again.html.includes(">Issue ") && again.html.includes("Nothing new to bill"));
   const invoice = await db.invoice.findFirstOrThrow({ where: { agreementId } });
 
   const pay = recordedPayment(await submit("/payments/new", M, 'name="reference"', { partyId, method: "MPESA", reference: "wf123abc", amount: "25000", receivedDate: todayISO(), evidenceNote: "" }));
@@ -385,7 +390,7 @@ try {
   check("unallocated 10,000 stays on the payment", payPage.html.includes("KES 10,000.00"));
 
   const dash = await getPage("/", finance);
-  check("dashboard shows the verified payments this month", dash.html.includes(">Verified payments<") && dash.html.includes("KES 25,000.00"));
+  check("dashboard shows the verified payments this month", dash.html.includes(">Verified payments (net)<") && dash.html.includes("KES 25,000.00"));
   check("dashboard unpaid balance reflects the allocation (5,000 left)", dash.html.includes(">Total outstanding<") && dash.html.includes("KES 5,000.00"));
   const dash12 = await getPage("/?period=12m", finance);
   check("dashboard period filter works", dash12.status === 200 && /aria-current="true"[^>]*>Last 12 months</.test(dash12.html));
@@ -396,15 +401,26 @@ try {
     ws.status === 200 && ["Billed", "Verified payments", "Pending verification", "Outstanding"].every((t) => ws.html.includes(`>${t}<`)) && ws.html.includes("Create invoice") && ws.html.includes("Record payment") &&
       (await getPage("/payments", finance)).html.includes("Unallocated (for review)"),
   );
+  const billingHome = (await getPage("/invoices", finance)).html;
+  check(
+    "Billing & Payments opens on the current month with the four summary cards and a More actions menu that leads to real operations",
+    billingHome.includes(">Billing &amp; Payments<") && billingHome.includes("data-billing-summary") && ["Total tenants", "Total billed", "Paid / credited", "Outstanding balance"].every((t) => billingHome.includes(t)) &&
+      billingHome.includes("More actions") && billingHome.includes("&amp;types=RENT") && billingHome.includes("&amp;types=MANAGEMENT_FEE") && billingHome.includes("&amp;choose=1") && billingHome.includes("/api/billing-report?download=1"),
+    [">Billing &amp; Payments<", "data-billing-summary", "Total tenants", "Total billed", "Paid / credited", "Outstanding balance", "More actions", "&amp;types=RENT", "&amp;types=MANAGEMENT_FEE", "&amp;choose=1", "/api/billing-report?download=1"].filter((t) => !billingHome.includes(t)).join(" | "),
+  );
+  const billingCsv = await fetch(`${BASE}/api/billing-report?download=1`, { headers: { cookie: finance } });
+  const billingCsvText = (await billingCsv.text()).replace(/^\uFEFF/, "");
+  const anonCsv = await fetch(`${BASE}/api/billing-report`, { redirect: "manual" });
+  check("the billing report downloads as CSV for finance and is refused without a session", billingCsv.status === 200 && billingCsvText.startsWith("Invoice,Account,Account type") && anonCsv.status !== 200, `${billingCsv.status} ${JSON.stringify(billingCsvText.slice(0, 40))} anon ${anonCsv.status}`);
   const ledgerPage = await getPage("/finance/ledger?from=2000-01-01", finance);
   check("the combined ledger lists the issued invoice and the verified payment", ledgerPage.html.includes(invoice.number ?? "missing") && ledgerPage.html.includes("Verified payment") && ledgerPage.html.includes("Payments not counted"));
-  const invTabs = (await getPage("/invoices", finance)).html;
+  const invTabs = (await getPage("/invoices?period=all", finance)).html;
   const workspaceTabs = (html: string) => [...(html.match(/<nav aria-label="Billing and payments"[\s\S]*?<\/nav>/)?.[0] ?? "").matchAll(/>([^<>]+)<\/a>/g)].map((x) => x[1]);
   check("the workspace has two lists, Invoices and Payments (the overview is a link beside them)", JSON.stringify(workspaceTabs(invTabs)) === JSON.stringify(["Invoices", "Payments", "Billing overview"]), workspaceTabs(invTabs).join(", "));
   check(
     "Invoices keeps credit notes, notices & arrears and billing runs one click away, with Create Invoice, Record Payment and an Actions menu per row",
-    ['href="/invoices?view=credit-notes"', 'href="/notices"', 'href="/billing"'].every((t) => invTabs.includes(t)) && invTabs.includes(">Run billing<") && invTabs.includes(">Create Invoice<") && invTabs.includes(">Record Payment<") &&
-      [">Account / unit<", ">Invoice date / due<", ">Paid / credits<", ">Outstanding<"].every((t) => invTabs.includes(t)) && invTabs.includes(`aria-label="Actions for ${invoice.number}"`) &&
+    ['href="/invoices?view=credit-notes"', 'href="/notices"', 'href="/billing"'].every((t) => invTabs.includes(t)) && invTabs.includes(">Create Invoice<") && invTabs.includes(">Record Payment<") &&
+      [">Account<", ">Charges<", ">Invoice date<", ">Due date<", ">Paid<", ">Credits<", ">Outstanding<"].every((t) => invTabs.includes(t)) && invTabs.includes(`aria-label="Actions for ${invoice.number}"`) &&
       invTabs.includes(`href="/payments/new?partyId=${partyId}&amp;invoiceId=${invoice.id}"`) && invTabs.includes("Issued invoices are kept for the record"),
   );
   const overviewPage = (await getPage("/finance", finance)).html;
@@ -469,6 +485,34 @@ try {
     "the dashboard's monthly expenses graph separates costs approved from paid out, linked to filtered lists",
     dashFin.includes("Monthly expenses (KES)") && dashFin.includes("Approved, not yet paid:") && dashFin.includes("Paid out this month:") && dashFin.includes("status=PAID&amp;basis=paid"),
   );
+  const dashAdmin = (await getPage("/", admin)).html;
+  const dashLinks = [
+    ["occupied units", 'href="/units?occupancy=OCCUPIED"'],
+    ["vacant units", 'href="/units?occupancy=VACANT"'],
+    ["outstanding from earlier months", "/invoices?status=OPEN&amp;to="],
+    ["total outstanding", 'href="/invoices?status=OPEN&amp;period=all"'],
+    ["unallocated verified payments", 'href="/payments?unallocated=1"'],
+    ["the period's billed amount", "/invoices?from="],
+    ["the period's verified payments", "/payments?status=VERIFIED&amp;from="],
+    ["pending verification", 'href="/payments?status=PENDING"'],
+    ["the arrears bands", "/reports?report=arrears&amp;bucket="],
+    ["past-due invoices", 'href="/invoices?status=PAST_DUE&amp;period=all"'],
+    ["Run monthly billing", 'href="/billing"'],
+    ["Add unit", 'href="/units/new"'],
+    ["Prepare reminders", 'href="/notices"'],
+    ["Record payment", 'href="/payments/new"'],
+    ["Today and This week periods", 'href="/?period=today"'],
+  ];
+  const buildingCard = /<a(?=[^>]*href="\/units")(?=[^>]*data-building)[^>]*>/.test(dashAdmin);
+  const missingLinks = [...(buildingCard ? [] : ["the building card opens the unit register"]), ...dashLinks.filter(([, t]) => !dashAdmin.includes(t)).map(([n]) => n)];
+  check("every dashboard figure and action links to its list or workflow", missingLinks.length === 0, missingLinks.join(", "));
+  check("the dashboard's explanatory paragraph is gone and the arrears panel names the accounts owing most", !dashAdmin.includes("Unpaid balances and arrears are amounts owed") && (dashAdmin.includes("data-top-arrears") || !dashAdmin.includes("past due ·")));
+  const dashOps = (await getPage("/", ops)).html;
+  check("a role without financial access gets no financial figures or links to them", !dashOps.includes("Unpaid Tenant Balance") && !dashOps.includes('href="/payments?unallocated=1"') && !dashOps.includes('href="/billing"'));
+  const unallocatedPage = await getPage("/payments?unallocated=1", finance);
+  check("the unallocated-payments link opens the payments with money not yet applied", unallocatedPage.status === 200 && unallocatedPage.html.includes("money not yet applied to any invoice"));
+  const occupiedUnits = await getPage("/units?occupancy=OCCUPIED", admin);
+  check("the occupied-units link opens the unit register filtered to occupied units", occupiedUnits.status === 200 && occupiedUnits.html.includes('value="OCCUPIED" selected'));
   const customFrom = monthStart(todayISO());
   const customDash = (await getPage(`/?period=custom&from=${customFrom}&to=${todayISO()}`, finance)).html;
   check(

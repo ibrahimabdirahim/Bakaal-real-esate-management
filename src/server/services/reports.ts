@@ -148,6 +148,14 @@ export async function dashboard(actor: Actor, period: DashboardPeriod | "custom"
       outstandingThisMonth: sumCents(open.filter((i) => (i.periodStart ?? i.issueDate ?? today) >= monthStart(today)).map((i) => i.balance)),
       pastDue: sumCents(open.filter((i) => i.dueDate != null && i.dueDate < today).map((i) => i.balance)),
       accountsInArrears: new Set(open.filter((i) => i.dueDate != null && i.dueDate < today).map((i) => i.party.id)).size,
+      /** Issued invoices still owed after their due date, the oldest such due date, and the accounts owing most past due. */
+      overdueInvoices: open.filter((i) => i.dueDate != null && i.dueDate < today).length,
+      oldestDue: open.filter((i) => i.dueDate != null && i.dueDate < today).reduce<ISODate | null>((o, i) => (o == null || i.dueDate! < o ? i.dueDate! : o), null),
+      topArrears: [...open.filter((i) => i.dueDate != null && i.dueDate < today).reduce((acc, i) => {
+        const a = acc.get(i.party.id) ?? { partyId: i.party.id, name: i.party.displayName, pastDue: 0, invoices: 0, oldestDue: i.dueDate! };
+        acc.set(i.party.id, { ...a, pastDue: a.pastDue + i.balance, invoices: a.invoices + 1, oldestDue: i.dueDate! < a.oldestDue ? i.dueDate! : a.oldestDue });
+        return acc;
+      }, new Map<string, { partyId: string; name: string; pastDue: Cents; invoices: number; oldestDue: ISODate }>()).values()].sort((x, y) => y.pastDue - x.pastDue).slice(0, 5),
       ageing,
       monthly: months.map((m) => ({
         month: m,

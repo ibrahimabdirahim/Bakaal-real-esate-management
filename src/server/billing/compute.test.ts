@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeBillingPreview, resolveDueDay, type BillableAgreement } from "@/server/billing/compute";
+import { billedKey, computeBillingPreview, resolveDueDay, type BillableAgreement, type LineCategory } from "@/server/billing/compute";
 
 const P = "2026-11-01";
 
@@ -22,12 +22,21 @@ function agreement(over: Partial<BillableAgreement> = {}): BillableAgreement {
   };
 }
 
-function run(agreements: BillableAgreement[], opts: { invoiced?: string[]; policies?: { value: string; effectiveFrom: string }[] } = {}) {
+function run(agreements: BillableAgreement[], opts: { invoiced?: string[]; billed?: string[]; categories?: LineCategory[]; policies?: { value: string; effectiveFrom: string }[] } = {}) {
+  // `invoiced`: agreements whose every charge was already billed this month (as a full monthly run leaves them).
+  const billed = new Set(opts.billed ?? []);
+  for (const id of opts.invoiced ?? []) {
+    const ag = agreements.find((a) => a.id === id)!;
+    billed.add(billedKey(id, "AGREEMENT_RENT", id));
+    billed.add(billedKey(id, "AGREEMENT_MANAGEMENT_FEE", id));
+    for (const c of ag.charges) billed.add(billedKey(id, "AGREEMENT_CHARGE", c.id));
+  }
   return computeBillingPreview({
     periodStart: P,
     agreements,
     policies: (opts.policies ?? []).map((p) => ({ key: "DEFAULT_DUE_DAY" as const, ...p })),
-    alreadyInvoicedAgreementIds: new Set(opts.invoiced ?? []),
+    alreadyBilled: billed,
+    categories: opts.categories,
   });
 }
 
@@ -157,3 +166,65 @@ describe("due date policy hierarchy", () => {
     expect(r.exceptions[0].code).toBe("NO_DUE_DATE");
   });
 });
+
+describe("billing by charge type (F65)", () => {
+  const water = { id: "c1", category: "SHARED_CHARGE" as const, description: "Water", amount: 150000, effectiveFrom: "2026-01-01", effectiveTo: null };
+  const cleaning = { id: "c2", category: "SERVICE_CHARGE" as const, description: "Cleaning", amount: 50000, effectiveFrom: "2026-01-01", effectiveTo: null };
+
+  it("bills only the chosen charge types", () => {
+    const ag = agreement({ charges: [water, cleaning] });
+    expect(run([ag], { categories: ["RENT"] }).invoices[0].lines.map((l) => l.category)).toEqual(["RENT"]);
+    expect(run([ag], { categories: ["SERVICE_CHARGE"] }).invoices[0]).toMatchObject({ total: 50000, lines: [expect.objectContaining({ description: "Cleaning" })] });
+    expect(run([ag], { categories: ["SHARED_CHARGE"] }).invoices[0]).toMatchObject({ total: 150000 });
+    expect(run([ag], { categories: ["RENT", "SHARED_CHARGE"] }).invoices[0].total).toBe(2650000);
+    expect(run([ag]).categories).toEqual(["RENT", "SERVICE_CHARGE", "SHARED_CHARGE", "MANAGEMENT_FEE", "OTHER"]);
+  });
+
+  it("skips charges already billed this month and bills only the rest", () => {
+    const ag = agreement({ charges: [water, cleaning] });
+    const r = run([ag], { billed: [billedKey("ag1", "AGREEMENT_RENT", "ag1")] });
+    expect(r.invoices[0].lines.map((l) => l.description)).toEqual(["Water", "Cleaning"]);
+    expect(r.invoices[0].total).toBe(200000);
+    expect(r.invoices[0].alreadyBilled).toEqual([{ category: "RENT", description: "Rent" }]);
+  });
+
+  it("reports an agreement whose chosen charges are all billed as already invoiced, never twice", () => {
+    const ag = agreement({ charges: [water] });
+    const r = run([ag], { categories: ["RENT"], billed: [billedKey("ag1", "AGREEMENT_RENT", "ag1")] });
+    expect(r.invoices).toHaveLength(0);
+    expect(r.exceptions).toEqual([expect.objectContaining({ code: "ALREADY_INVOICED", message: expect.stringContaining("Rent") })]);
+    // The shared charge is still billable on its own.
+    expect(run([ag], { categories: ["SHARED_CHARGE"], billed: [billedKey("ag1", "AGREEMENT_RENT", "ag1")] }).invoices[0].total).toBe(150000);
+  });
+
+  it("treats a charge type an account does not have as not applicable, not as a problem", () => {
+    const owner = agreement({ id: "own", type: "OWNERSHIP", rentAmount: null, startDate: "2026-11-10", charges: [] });
+    const r = run([owner], { categories: ["RENT"] });
+    expect(r).toMatchObject({ invoices: [], exceptions: [], reviews: [] });
+    expect(r.nothingToBill).toEqual([expect.objectContaining({ agreementId: "own" })]); // not flagged as part month
+  });
+
+  it("flags a missing management fee only when management fees are being billed", () => {
+    const managed = agreement({ id: "mg", type: "MANAGEMENT", rentAmount: null, managementFeeAmount: null, charges: [cleaning] });
+    expect(run([managed], { categories: ["MANAGEMENT_FEE"] })).toMatchObject({ invoices: [], reviews: [expect.objectContaining({ agreementId: "mg" })] });
+    expect(run([managed], { categories: ["SERVICE_CHARGE"] })).toMatchObject({ reviews: [], invoices: [expect.objectContaining({ total: 50000 })] });
+    const fee = agreement({ id: "mg", type: "MANAGEMENT", rentAmount: null, managementFeeAmount: 300000 });
+    expect(run([fee], { categories: ["MANAGEMENT_FEE"] }).invoices[0].lines).toEqual([expect.objectContaining({ category: "MANAGEMENT_FEE", amount: 300000, sourceType: "AGREEMENT_MANAGEMENT_FEE" })]);
+    expect(run([fee], { categories: ["RENT"] }).nothingToBill).toHaveLength(1); // a managed owner pays no rent
+  });
+
+  it("holds an agreement for a part-month charge of a chosen type only", () => {
+    const partial = { ...water, effectiveFrom: "2026-11-15" };
+    const ag = agreement({ charges: [partial] });
+    expect(run([ag], { categories: ["SHARED_CHARGE"] }).exceptions[0].code).toBe("PARTIAL_CHARGE_PERIOD");
+    expect(run([ag], { categories: ["RENT"] }).invoices[0].total).toBe(2500000); // the rent is not held by another type's charge
+  });
+
+  it("keeps amounts in whole cents, with no floating-point drift", () => {
+    const odd = { ...water, amount: 33333 };
+    const r = run([agreement({ rentAmount: 1234567, charges: [odd, { ...cleaning, amount: 1 }] })]);
+    expect(r.invoices[0].total).toBe(1234567 + 33333 + 1);
+    expect(Number.isInteger(r.invoices[0].total)).toBe(true);
+  });
+});
+

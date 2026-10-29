@@ -8,6 +8,7 @@ import { Notice, PageHeader } from "@/components/ui";
 import { NoBuilding } from "@/components/no-building";
 import { createPartyAction } from "../actions";
 import { AccountCreateForm } from "./account-create-form";
+import { formatMonth, monthStart, todayISO } from "@/lib/dates";
 
 export const metadata = { title: "Add New Account" };
 
@@ -33,6 +34,7 @@ export default async function NewAccountPage() {
             units={units.map((u) => ({ value: u.id, label: `${u.unitNumber}${u.unitType ? ` — ${u.unitType}` : ""} (${OCCUPANCY_LABELS[u.occupancy].toLowerCase()})` }))}
             canEditSensitive={can(actor.role, "accounts.view_sensitive")}
             maxBytes={MAX_DOCUMENT_BYTES}
+            billMonth={can(actor.role, "billing.issue") ? formatMonth(monthStart(todayISO())) : null}
           />
         ) : (
           <Notice>Adding an account also records its agreement, which your role cannot do. Ask a building manager or an administrator.</Notice>

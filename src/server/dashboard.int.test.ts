@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/server/db";
 import { actor, assertTestDatabase, resetTestData } from "@/server/testing";
 import { saveBuilding } from "@/server/services/admin";
-import { createAgreement, createParty, createUnit, type AgreementInput } from "@/server/services/property";
+import { createAgreement, createParty, createUnit, listUnits, updateUnit, type AgreementInput, type UnitFilter } from "@/server/services/property";
 import { issueBilling } from "@/server/services/billing";
 import { allocatePayment, recordPayment, verifyPayment } from "@/server/services/finance";
 import { createExpense, decideExpense, type ExpenseInput } from "@/server/services/operations";
 import { dashboard, EXPIRING_SOON_DAYS } from "@/server/services/reports";
 import { addDays, addMonths, monthStart, todayISO } from "@/lib/dates";
+import { weekStart } from "@/lib/dashboard-period";
 
 assertTestDatabase();
 
@@ -63,6 +64,42 @@ describe("dashboard figures", () => {
     expect(d.money!.outstanding).toBe(now.outstanding);
     await expect(dashboard(finance, "custom", { from: today, to: addDays(today, -1) })).rejects.toThrow(/valid start and end/);
     await expect(dashboard(finance, "custom")).rejects.toThrow(/valid start and end/);
+  });
+
+  it("links its unit figures to unit lists that count exactly the same units (retired ones apart)", async () => {
+    const { unit: let1, party: p1 } = await tenantWithUnit("U1");
+    await createAgreement(manager, rental(let1.id, p1.id));
+    await tenantWithUnit("U2"); // vacant
+    const { unit: old } = await tenantWithUnit("U3");
+    await updateUnit(admin, old.id, { unitNumber: "U3", floor: null, unitType: null, notes: null, isActive: false }); // retired, vacant
+    const d = await dashboard(finance, "month");
+    const count = async (occupancy: UnitFilter) => (await listUnits(finance, { occupancy })).length;
+    expect({ occupied: d.occupied, vacant: d.vacant, inUse: d.totalUnits, retired: d.unavailableUnits }).toEqual({ occupied: 1, vacant: 1, inUse: 2, retired: 1 });
+    expect({ occupied: await count("OCCUPIED"), vacant: await count("VACANT"), retired: await count("RETIRED"), rented: await count("RENTED"), all: await count("") }).toEqual({ occupied: 1, vacant: 1, retired: 1, rented: 1, all: 3 });
+  });
+
+  it("shows overdue invoices, the oldest due date and the accounts owing most, after partial payments", async () => {
+    const a = await tenantWithUnit("A1");
+    const b = await tenantWithUnit("A2");
+    await createAgreement(manager, rental(a.unit.id, a.party.id));
+    await createAgreement(manager, rental(b.unit.id, b.party.id, { rentAmount: 1000000 }));
+    await issueBilling(finance, addMonths(thisMonth, -2));
+    await issueBilling(finance, addMonths(thisMonth, -1));
+    // Account B pays part of its oldest invoice: its past-due amount falls by exactly that.
+    const oldestB = await db.invoice.findFirstOrThrow({ where: { partyId: b.party.id }, orderBy: { periodStart: "asc" } });
+    const p = await recordPayment(finance, { partyId: b.party.id, method: "MPESA", reference: "PART-B", amount: 400000, receivedDate: today, evidenceNote: null }, { verify: true, allocations: [{ invoiceId: oldestB.id, amount: 400000 }] });
+    expect(p.status).toBe("VERIFIED");
+    const m = (await dashboard(finance, "month")).money!;
+    expect(m).toMatchObject({ overdueInvoices: 4, accountsInArrears: 2, oldestDue: `${addMonths(thisMonth, -2).slice(0, 8)}01` });
+    expect(m.topArrears.map((x) => [x.name, x.invoices, x.pastDue])).toEqual([["Tenant A1", 2, 5000000], ["Tenant A2", 2, 1600000]]);
+    expect(m.pastDue).toBe(6600000);
+  });
+
+  it("offers Today and This week, as calendar days in Nairobi", async () => {
+    const { party } = await tenantWithUnit("W1");
+    await verifyPayment(admin, (await recordPayment(finance, { partyId: party.id, method: "CASH", reference: "TODAY-1", amount: 150000, receivedDate: today, evidenceNote: null })).id);
+    expect(await dashboard(finance, "today")).toMatchObject({ from: today, to: today, money: expect.objectContaining({ collected: 150000 }) });
+    expect(await dashboard(finance, "week")).toMatchObject({ from: weekStart(today), to: today, money: expect.objectContaining({ collected: 150000 }) });
   });
 
   it("shows no collection rate (not 0% or NaN) when nothing was billed", async () => {

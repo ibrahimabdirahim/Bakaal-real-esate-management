@@ -95,11 +95,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </div>
         </div>
         <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-8">{children}</main>
-        {/* After all page content (the main area grows to fill short pages); never fixed over content. */}
-        <footer className="no-print flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-3 text-[11px] text-slate-400 sm:px-8">
-          <BrandLogo width={22} className="rounded" />
-          <span>{`© ${new Date().getFullYear()} BAKAAL Real Estate Management`}</span>
-          <span className="tracking-[0.14em] uppercase">Staff only</span>
+        {/* The one footer of every signed-in page: after all page content (the main area grows to fill short
+            pages), never fixed over content, and left out of printouts. Sign-in and print views have their own layouts. */}
+        <footer className="no-print flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 px-4 py-4 text-center text-xs sm:px-8">
+          <BrandLogo width={22} decorative className="rounded" />
+          <a href="https://bakaal-real-esate-management.onrender.com/" className="font-medium text-slate-600 hover:text-primary-700 hover:underline">
+            BKL Development Limited
+          </a>
+          <span className="text-slate-400">{`© ${new Date().getFullYear()} BAKAAL Real Estate Management`}</span>
         </footer>
       </div>
     </div>

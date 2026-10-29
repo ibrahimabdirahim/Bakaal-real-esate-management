@@ -5,6 +5,8 @@ import { useId, useRef } from "react";
 import {
   Archive,
   ArrowRight,
+  Bell,
+  CalendarClock,
   ArrowRightLeft,
   CalendarX,
   Ban,
@@ -52,7 +54,9 @@ const ICONS: [RegExp, LucideIcon][] = [
   [/^record linked expense\b/i, Receipt],
   [/^(new|create|record)\b/i, FilePlus2],
   [/^(assign|edit, assign)\b/i, UserPlus],
-  [/^download\b/i, Download],
+  [/^(download|export)\b/i, Download],
+  [/^(generate|bulk create)\b/i, CalendarClock],
+  [/^(prepare|send)\b/i, Bell],
   [/^retire\b/i, Archive],
   [/^return to use\b/i, RotateCcw],
   [/^end\b/i, CalendarX],
@@ -66,7 +70,7 @@ const iconFor = (label: string) => ICONS.find(([re]) => re.test(label))?.[1] ?? 
  * scrolls sideways never clips it; it is placed under its button. Unavailable actions are listed
  * with the reason, so the user sees what to do instead.
  */
-export function RowActions({ label, items }: { label: string; items: RowAction[] }) {
+export function RowActions({ label, items, buttonLabel = "Actions", prominent = false }: { label: string; items: RowAction[]; buttonLabel?: string; /** A page-level menu (e.g. More actions): the size of the page's other buttons. */ prominent?: boolean }) {
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   const place = (menu: HTMLElement) => {
@@ -85,9 +89,9 @@ export function RowActions({ label, items }: { label: string; items: RowAction[]
         type="button"
         popoverTarget={id}
         aria-label={label}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:outline-none"
+        className={`inline-flex items-center gap-1 border border-slate-300 bg-white font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:outline-none ${prominent ? "rounded-lg px-4 py-2 text-sm" : "rounded-md px-2.5 py-1.5 text-xs"}`}
       >
-        Actions <ChevronDown className="size-3.5" aria-hidden />
+        {buttonLabel} <ChevronDown className={prominent ? "size-4" : "size-3.5"} aria-hidden />
       </button>
       <div
         id={id}

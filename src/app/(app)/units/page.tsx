@@ -3,9 +3,9 @@ import { Building2, Plus } from "lucide-react";
 import { requirePage } from "@/server/auth/session";
 import { can } from "@/server/auth/permissions";
 import { findBuilding } from "@/server/services/common";
-import { listUnits, unitRegistration } from "@/server/services/property";
+import { listUnits, unitRegistration, type UnitFilter } from "@/server/services/property";
 import { RegistrationProgress } from "./registration-progress";
-import { OCCUPANCY_LABELS, type Occupancy } from "@/server/services/occupancy";
+import { OCCUPANCY_LABELS } from "@/server/services/occupancy";
 import { Badge, ButtonLink, Card, FilterBar, FilterInput, FilterSelect, FilterSubmit, Money, PageHeader, Pagination, Table, Td } from "@/components/ui";
 import { paginate, queryWithoutPage } from "@/lib/paginate";
 import { occupancyTone } from "./labels";
@@ -20,7 +20,7 @@ export default async function UnitsPage({ searchParams }: PageProps<"/units">) {
   if (!(await findBuilding())) return <NoBuilding actor={actor} title="Unit register" />;
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
-  const occupancy = (typeof sp.occupancy === "string" ? sp.occupancy : "") as Occupancy | "";
+  const occupancy = (typeof sp.occupancy === "string" && (sp.occupancy in OCCUPANCY_LABELS || sp.occupancy === "OCCUPIED" || sp.occupancy === "RETIRED") ? sp.occupancy : "") as UnitFilter;
   const [all, registration] = await Promise.all([listUnits(actor, { q, occupancy }), unitRegistration(actor)]);
   const { items: units, ...pg } = paginate(all, sp.page);
   const showRent = can(actor.role, "agreements.view");
@@ -40,7 +40,7 @@ export default async function UnitsPage({ searchParams }: PageProps<"/units">) {
       <Card>
         <FilterBar>
           <FilterInput label="Search" name="q" defaultValue={q} placeholder="Unit number or type" />
-          <FilterSelect label="Status" name="occupancy" defaultValue={occupancy} options={[{ value: "", label: "All units" }, ...Object.entries(OCCUPANCY_LABELS).map(([value, label]) => ({ value, label }))]} />
+          <FilterSelect label="Status" name="occupancy" defaultValue={occupancy} options={[{ value: "", label: "All units" }, { value: "OCCUPIED", label: "Occupied (any)" }, ...Object.entries(OCCUPANCY_LABELS).map(([value, label]) => ({ value, label })), { value: "RETIRED", label: "Retired (not in use)" }]} />
           <FilterSubmit />
         </FilterBar>
         <Table head={["Unit", "Floor", "Type", "Status", "Tenant", "Owner", ...(showRent ? ["Monthly rent"] : []), <span key="a" className="sr-only">Actions</span>]} empty={q || occupancy ? "No units match these filters." : "No units yet. Add the building's units to get started."}>

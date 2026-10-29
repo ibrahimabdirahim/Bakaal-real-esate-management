@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { Printer } from "lucide-react";
 
 export function PrintButton({ label = "Print / save as PDF" }: { label?: string }) {
@@ -8,4 +9,13 @@ export function PrintButton({ label = "Print / save as PDF" }: { label?: string 
       <Printer className="size-4" aria-hidden /> {label}
     </button>
   );
+}
+
+/** Opens the browser's print dialog once the page has loaded (an invoice opened with ?print=1). */
+export function AutoPrint() {
+  useEffect(() => {
+    const t = setTimeout(() => window.print(), 300);
+    return () => clearTimeout(t);
+  }, []);
+  return null;
 }

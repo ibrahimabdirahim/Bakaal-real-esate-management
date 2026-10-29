@@ -25,7 +25,9 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/payment
   const from = typeof sp.from === "string" && isISODate(sp.from) ? sp.from : "";
   const to = typeof sp.to === "string" && isISODate(sp.to) ? sp.to : "";
   const partyId = typeof sp.partyId === "string" && sp.partyId ? sp.partyId : undefined;
-  const all = await listPayments(actor, { status, partyId, q: q || undefined, from: from || undefined, to: to || undefined });
+  // ?unallocated=1 (from the dashboard): verified payments with money not yet applied to any invoice.
+  const unallocatedOnly = sp.unallocated === "1";
+  const all = (await listPayments(actor, { status: unallocatedOnly ? "VERIFIED" : status, partyId, q: q || undefined, from: from || undefined, to: to || undefined })).filter((p) => !unallocatedOnly || p.unallocated > 0);
   const { items: payments, ...pg } = paginate(all, sp.page);
   const verified = all.filter((p) => p.status === "VERIFIED");
   // Status shortcuts with counts (other filters kept), using the payment statuses as they are.
@@ -70,6 +72,14 @@ export default async function PaymentsPage({ searchParams }: PageProps<"/payment
         </div>
       )}
       <FilterPills label="Payment status" items={pills} />
+      {unallocatedOnly && (
+        <div className="mb-4">
+          <Notice tone="blue">
+            {`Showing verified payments with money not yet applied to any invoice (${formatMoney(sumCents(all.map((p) => p.unallocated)))} in total). It reduces no invoice until it is allocated. `}
+            <Link href="/payments" className="font-medium underline">Show all payments</Link>
+          </Notice>
+        </div>
+      )}
       <Card>
         <FilterBar>
           {/* The status is chosen with the buttons above; searching keeps it. */}

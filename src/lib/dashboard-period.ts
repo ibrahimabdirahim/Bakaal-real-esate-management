@@ -1,9 +1,11 @@
 // The dashboard's reporting period (pure; shared by the dashboard and the Billing & Payments
 // overview). Dates are calendar dates in the building's time zone (todayISO), both ends included.
-import { addMonths, formatDate, formatMonth, monthEnd, monthStart, todayISO, type ISODate } from "@/lib/dates";
+import { addDays, addMonths, formatDate, formatMonth, monthEnd, monthStart, todayISO, type ISODate } from "@/lib/dates";
 import { checkRange, type Range } from "@/lib/report-dates";
 
 export const DASHBOARD_PERIODS = {
+  today: "Today",
+  week: "This week",
   month: "This month",
   "last-month": "Last month",
   "3m": "Last 3 months",
@@ -16,9 +18,19 @@ export type DashboardPeriod = keyof typeof DASHBOARD_PERIODS;
 /** The earliest start date accepted for a custom range (no records exist before it). */
 export const EARLIEST_DATE = "2000-01-01";
 
+/** Monday of the week containing `day` (weeks run Monday to Sunday, ISO 8601). */
+export function weekStart(day: ISODate): ISODate {
+  const weekday = new Date(`${day}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return addDays(day, -((weekday + 6) % 7));
+}
+
 export function periodRange(period: DashboardPeriod, today = todayISO()): Range {
   const m0 = monthStart(today);
   switch (period) {
+    case "today":
+      return { from: today, to: today };
+    case "week":
+      return { from: weekStart(today), to: today };
     case "last-month":
       return { from: addMonths(m0, -1), to: monthEnd(addMonths(m0, -1)) };
     case "3m":

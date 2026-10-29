@@ -19,7 +19,12 @@ UNION ALL SELECT 'RENT line from a non-rental agreement', count(*) FROM "Invoice
 UNION ALL SELECT 'MANAGEMENT_FEE line from a non-management agreement', count(*) FROM "InvoiceLine" l JOIN "Invoice" i ON i.id = l."invoiceId" JOIN "Agreement" g ON g.id = i."agreementId" WHERE l.category = 'MANAGEMENT_FEE' AND g.type <> 'MANAGEMENT'
 UNION ALL SELECT 'management agreement without an ownership record', count(*) FROM "Agreement" m WHERE m.type = 'MANAGEMENT' AND m.status <> 'CANCELLED'
   AND NOT EXISTS (SELECT 1 FROM "Agreement" o WHERE o.type = 'OWNERSHIP' AND o.status <> 'CANCELLED' AND o."unitId" = m."unitId" AND o."partyId" = m."partyId" AND o."startDate" <= m."startDate")
-UNION ALL SELECT 'duplicate recurring invoice for one agreement and month', count(*) FROM (SELECT "agreementId", "periodStart" FROM "Invoice" WHERE kind = 'RECURRING' GROUP BY 1, 2 HAVING count(*) > 1) d
+UNION ALL SELECT 'recurring charge billed twice in one month', count(*) FROM (SELECT i."agreementId", i."periodStart", l."sourceType", l."sourceId" FROM "InvoiceLine" l JOIN "Invoice" i ON i.id = l."invoiceId" WHERE i.kind = 'RECURRING' GROUP BY 1, 2, 3, 4 HAVING count(*) > 1) d
+UNION ALL SELECT 'recurring invoice line without its billed-charge record', count(*) FROM "InvoiceLine" l JOIN "Invoice" i ON i.id = l."invoiceId" WHERE i.kind = 'RECURRING'
+  AND NOT EXISTS (SELECT 1 FROM "BilledCharge" b WHERE b."invoiceId" = i.id AND b."sourceType" = l."sourceType" AND b."sourceId" = l."sourceId" AND b.amount = l.amount AND b.category = l.category)
+UNION ALL SELECT 'billed-charge record without its invoice line', count(*) FROM "BilledCharge" b JOIN "Invoice" i ON i.id = b."invoiceId"
+  WHERE i."agreementId" IS DISTINCT FROM b."agreementId" OR i."periodStart" IS DISTINCT FROM b."periodStart"
+  OR NOT EXISTS (SELECT 1 FROM "InvoiceLine" l WHERE l."invoiceId" = i.id AND l."sourceType" = b."sourceType" AND l."sourceId" = b."sourceId")
 UNION ALL SELECT 'agreement or charge on an archived account', count(*) FROM "Agreement" g JOIN "Party" p ON p.id = g."partyId" WHERE p."archivedAt" IS NOT NULL AND g."createdAt" > p."archivedAt"
 UNION ALL SELECT 'attached document whose record is missing', count(*) FROM "Document" d WHERE d."ownerType" IS NOT NULL AND NOT (
      (d."ownerType" = 'PARTY' AND (EXISTS (SELECT 1 FROM "Party" x WHERE x.id = d."ownerId") OR EXISTS (SELECT 1 FROM "AuditEvent" e WHERE e."entityId" = d."ownerId" AND e.action = 'account.delete')))

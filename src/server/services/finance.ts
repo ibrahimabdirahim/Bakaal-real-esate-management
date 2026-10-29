@@ -10,6 +10,7 @@
 
 import { db, type DbOrTx, type Tx } from "@/server/db";
 import type { Prisma } from "@/generated/prisma/client";
+import type { ChargeCategory } from "@/generated/prisma/enums";
 import { audit } from "@/server/audit";
 import { checkSelfException, otherHolders, SELF_EXCEPTION, SELF_EXCEPTION_MIN_REASON, selfExceptionHint, type SelfException } from "@/server/services/self-approval";
 import { BusinessError, requirePermission, type Actor } from "@/server/auth/actor";
@@ -28,9 +29,10 @@ const invoiceInclude = {
   agreement: { select: { id: true, type: true, graceDays: true } },
   allocations: { where: { reversedAt: null }, select: { amount: true } },
   creditNotes: { select: { amount: true } },
+  lines: { select: { category: true } },
 } as const;
 
-type InvoiceWithAmounts = Awaited<ReturnType<typeof loadInvoices>>[number];
+type InvoiceWithAmounts = Omit<Awaited<ReturnType<typeof loadInvoices>>[number], "lines"> & { lines?: { category: ChargeCategory }[] };
 
 async function loadInvoices(where: Prisma.InvoiceWhereInput) {
   return db.invoice.findMany({ where, include: invoiceInclude, orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }] });
@@ -58,6 +60,8 @@ export function summarizeInvoice(inv: InvoiceWithAmounts, today = todayISO()) {
     dueDate: optionalFromDbDate(inv.dueDate),
     ...amounts,
     balance,
+    /** The charge types on the invoice, in the usual order (rent first). */
+    chargeTypes: CHARGE_ORDER.filter((c) => inv.lines?.some((l) => l.category === c)),
     paymentStatus: inv.status === "DRAFT" ? ("DRAFT" as const) : invoicePaymentStatus(amounts),
     dueState: inv.status === "DRAFT" ? null : dueState(balance, optionalFromDbDate(inv.dueDate), inv.agreement?.graceDays ?? null, today),
   };
@@ -65,26 +69,58 @@ export function summarizeInvoice(inv: InvoiceWithAmounts, today = todayISO()) {
 
 export type InvoiceSummary = ReturnType<typeof summarizeInvoice>;
 
+const CHARGE_ORDER: ChargeCategory[] = ["RENT", "SERVICE_CHARGE", "SHARED_CHARGE", "MANAGEMENT_FEE", "OTHER"];
+
 export type InvoiceFilter = "UNPAID" | "PART_PAID" | "PAID" | "DRAFT" | "PAST_DUE" | "OPEN" | "";
+export const INVOICE_SORTS = { newest: "Newest first", oldest: "Oldest first", due: "Due date", balance: "Largest outstanding", account: "Account A–Z" } as const;
+export type InvoiceSort = keyof typeof INVOICE_SORTS;
+
+export interface InvoiceListFilter {
+  status?: InvoiceFilter;
+  partyId?: string;
+  q?: string;
+  /** Billing date range: the billing month for monthly invoices, the issue date for manual ones. */
+  from?: ISODate;
+  to?: ISODate;
+  unitId?: string;
+  agreementType?: "RENTAL" | "OWNERSHIP" | "MANAGEMENT" | "NONE";
+  category?: ChargeCategory;
+  dueFrom?: ISODate;
+  dueTo?: ISODate;
+  /** Only invoices with at least this much still owed. */
+  minBalance?: Cents;
+  sort?: InvoiceSort;
+}
 
 /**
  * Lists invoices. `from`/`to` filter on the billing date: the billing month for monthly
  * invoices, the issue date for manual ones (the same definition the dashboard uses).
  */
-export async function listInvoices(
-  actor: Actor,
-  filter: { status?: InvoiceFilter; partyId?: string; q?: string; from?: ISODate; to?: ISODate } = {},
-) {
+export async function listInvoices(actor: Actor, filter: InvoiceListFilter = {}) {
   requirePermission(actor, "invoices.view");
   const rows = await loadInvoices({
     ...(filter.partyId ? { partyId: filter.partyId } : {}),
     ...(filter.status === "DRAFT" ? { status: "DRAFT" } : {}),
+    ...(filter.unitId ? { unitId: filter.unitId } : {}),
+    ...(filter.agreementType === "NONE" ? { agreementId: null } : filter.agreementType ? { agreement: { type: filter.agreementType } } : {}),
+    ...(filter.category ? { lines: { some: { category: filter.category } } } : {}),
+    ...(filter.dueFrom || filter.dueTo ? { dueDate: { ...(filter.dueFrom ? { gte: toDbDate(filter.dueFrom) } : {}), ...(filter.dueTo ? { lte: toDbDate(filter.dueTo) } : {}) } } : {}),
     ...(filter.q
       ? { OR: [{ number: { contains: filter.q, mode: "insensitive" } }, { party: { displayName: { contains: filter.q, mode: "insensitive" } } }, { unit: { unitNumber: { contains: filter.q, mode: "insensitive" } } }] }
       : {}),
   });
   const today = todayISO();
   let list = rows.map((r) => summarizeInvoice(r, today));
+  if (filter.minBalance != null) list = list.filter((i) => i.status === "ISSUED" && i.balance >= filter.minBalance!);
+  if (filter.sort && filter.sort !== "newest") {
+    const by: Record<Exclude<InvoiceSort, "newest">, (a: InvoiceSummary, b: InvoiceSummary) => number> = {
+      oldest: (a, b) => (a.issueDate ?? "9999").localeCompare(b.issueDate ?? "9999") || (a.number ?? "").localeCompare(b.number ?? ""),
+      due: (a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999"),
+      balance: (a, b) => b.balance - a.balance,
+      account: (a, b) => a.party.displayName.localeCompare(b.party.displayName, undefined, { sensitivity: "base" }),
+    };
+    list = [...list].sort(by[filter.sort]);
+  }
   if (filter.from || filter.to) {
     list = list.filter((i) => {
       const d = i.periodStart ?? i.issueDate;
@@ -103,6 +139,50 @@ export async function listInvoices(
     default:
       return list;
   }
+}
+
+/**
+ * The Billing & Payments summary cards (F65). Period figures cover the invoices billed in the
+ * period (billing month, or issue date for manual invoices); the outstanding balance is every issued
+ * invoice still owed today, whatever its period. Unallocated money is shown apart and reduces nothing.
+ */
+export async function billingSummary(actor: Actor, period: { from: ISODate; to: ISODate } | null) {
+  requirePermission(actor, "invoices.view");
+  const today = todayISO();
+  const [issued, inForce, payments] = await Promise.all([
+    loadInvoices({ status: "ISSUED" }),
+    db.agreement.findMany({
+      where: { status: { not: "CANCELLED" }, startDate: { lte: toDbDate(today) }, OR: [{ endDate: null }, { endDate: { gte: toDbDate(today) } }], party: { archivedAt: null } },
+      select: { partyId: true, type: true },
+    }),
+    can(actor.role, "payments.view") ? db.payment.findMany({ where: { status: "VERIFIED" }, select: { amount: true, allocations: { where: { reversedAt: null }, select: { amount: true } } } }) : Promise.resolve(null),
+  ]);
+  const all = issued.map((i) => summarizeInvoice(i, today));
+  const inPeriod = period ? all.filter((i) => {
+    const d = i.periodStart ?? i.issueDate;
+    return d != null && d >= period.from && d <= period.to;
+  }) : all;
+  const open = all.filter((i) => i.balance > 0);
+  const tenants = new Set(inForce.filter((a) => a.type === "RENTAL").map((a) => a.partyId));
+  const otherAccounts = new Set(inForce.filter((a) => a.type !== "RENTAL" && !tenants.has(a.partyId)).map((a) => a.partyId));
+  return {
+    /** Rent-paying tenants: accounts (not archived) with a rental agreement in force today, each counted once. */
+    tenants: tenants.size,
+    /** Purchased-unit owners and managed owners with an agreement in force today (not counted as tenants). */
+    otherAccounts: otherAccounts.size,
+    billed: sumCents(inPeriod.map((i) => i.total)),
+    invoiceCount: inPeriod.length,
+    paid: sumCents(inPeriod.map((i) => i.allocated)),
+    credited: sumCents(inPeriod.map((i) => i.credited)),
+    periodOutstanding: sumCents(inPeriod.map((i) => i.balance)),
+    outstanding: sumCents(open.map((i) => i.balance)),
+    pastDue: sumCents(open.filter((i) => i.dueDate != null && i.dueDate < today).map((i) => i.balance)),
+    openInvoices: open.length,
+    /** Units with at least one issued invoice (the list's unit filter). */
+    units: [...new Map(all.map((i) => [i.unit.id, i.unit])).values()].sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true })),
+    /** Verified money not applied to any invoice (null without payment access): not a reduction of any balance. */
+    unallocated: payments ? sumCents(payments.map((p) => cents(p.amount)! - sumCents(p.allocations.map((a) => cents(a.amount)!)))) : null,
+  };
 }
 
 export async function getInvoice(actor: Actor, id: string) {

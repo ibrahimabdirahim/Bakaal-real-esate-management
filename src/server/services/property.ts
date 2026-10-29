@@ -8,15 +8,19 @@ import { cents, describeDbError, findBuilding, getBuilding, lockActiveParty } fr
 import { registrationProgress } from "@/lib/capacity";
 import { unitTypeProblem } from "@/lib/unit-types";
 import { attachStaged } from "@/server/services/documents";
+import { billMonth } from "@/server/services/billing";
 import { CONTACT_FIELD_LABELS, changedContactFields, matchingContactFields, normalizeEmail, normalizeIdNumber, normalizePhone, type ContactDetails, type ContactField } from "@/lib/contact";
 import { occupancyOn, type Occupancy } from "@/server/services/occupancy";
 import { centsToDecimalString, type Cents } from "@/lib/money";
-import { fromDbDate, optionalFromDbDate, toDbDate, todayISO, type ISODate } from "@/lib/dates";
+import { fromDbDate, monthStart, optionalFromDbDate, toDbDate, todayISO, type ISODate } from "@/lib/dates";
 import type { AccountContext, ContextAgreement, ContextUnit } from "@/lib/account-context";
 
 // ---------------------------------------------------------------- units
 
-export async function listUnits(actor: Actor, filter: { q?: string; occupancy?: Occupancy | "" } = {}) {
+/** Unit list filters: one occupancy, any occupied unit, or retired units. Occupancy filters cover units in use only (as the dashboard counts them). */
+export type UnitFilter = Occupancy | "OCCUPIED" | "RETIRED" | "";
+
+export async function listUnits(actor: Actor, filter: { q?: string; occupancy?: UnitFilter } = {}) {
   requirePermission(actor, "units.view");
   const building = await getBuilding();
   const today = todayISO();
@@ -50,7 +54,17 @@ export async function listUnits(actor: Actor, filter: { q?: string; occupancy?: 
     };
   });
   rows.sort((a, b) => a.unitNumber.localeCompare(b.unitNumber, undefined, { numeric: true }));
-  return filter.occupancy ? rows.filter((r) => r.occupancy === filter.occupancy) : rows;
+  switch (filter.occupancy) {
+    case undefined:
+    case "":
+      return rows;
+    case "RETIRED":
+      return rows.filter((r) => !r.isActive);
+    case "OCCUPIED":
+      return rows.filter((r) => r.isActive && r.occupancy !== "VACANT");
+    default:
+      return rows.filter((r) => r.isActive && r.occupancy === filter.occupancy);
+  }
 }
 
 export async function getUnit(actor: Actor, id: string) {
@@ -604,6 +618,11 @@ export interface NewAccountInput {
   charges?: InitialCharge[];
   /** Staged uploads: account documents, the main agreement's documents (rental/ownership), management agreement documents. */
   documents: { account: string[]; agreement: string[]; management: string[] };
+  /**
+   * Issue this month's invoice(s) for the new account in the same transaction (F65), by the same
+   * rules as monthly billing; only for roles that may issue billing (otherwise ignored).
+   */
+  billNow?: boolean;
 }
 
 const blankTerms = { rentAmount: null, managementFeeAmount: null, purchaseDate: null, ownershipEvidence: null, lateFeeTerms: null, allocationTerms: null, graceDays: null, endDate: null } as const;
@@ -682,7 +701,10 @@ export async function createAccount(actor: Actor, input: NewAccountInput) {
       await attachStaged(tx, actor, input.documents.agreement, "AGREEMENT", mainAg.id);
       if (input.documents.management.length && !managementAg) throw new BusinessError("Management agreement documents need a management agreement.");
       if (managementAg) await attachStaged(tx, actor, input.documents.management, "AGREEMENT", managementAg.id);
-      return { party, agreement: mainAg, management: managementAg, flags: missingTermsFor(input) };
+      // The first invoice: this month, this account, every charge type. A part month, a missing due date or fee is
+      // held for review exactly as in a billing run; if issuing fails, the account is not created either.
+      const firstBilling = input.billNow && can(actor.role, "billing.issue") ? await billMonth(tx, actor, building.id, monthStart(todayISO()), { categories: [], partyIds: [party.id] }, "REGISTRATION") : null;
+      return { party, agreement: mainAg, management: managementAg, flags: missingTermsFor(input), firstBilling };
     });
   } catch (e) {
     if (e instanceof BusinessError) throw e;

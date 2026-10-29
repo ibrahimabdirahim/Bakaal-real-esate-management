@@ -178,8 +178,9 @@ model Agreement {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  charges  AgreementCharge[]
-  invoices Invoice[]
+  charges       AgreementCharge[]
+  invoices      Invoice[]
+  billedCharges BilledCharge[]
 
   @@index([unitId, type])
   @@index([partyId])
@@ -241,6 +242,17 @@ model BillingRun {
   invoiceCount Int
   skippedCount Int
   notes        String?
+  /// Charge types billed (F65). Empty on runs before F65, which billed every type.
+  chargeTypes        ChargeCategory[] @default([])
+  /// Accounts the run was limited to; empty = every account.
+  partyIds           String[]         @default([])
+  /// BILLING_PAGE (staff run) or REGISTRATION (first invoice when an account is added).
+  source             String           @default("BILLING_PAGE")
+  /// Run outcome (null on runs before F65): amount invoiced and what was left out, and why.
+  totalAmount        Decimal?         @db.Decimal(14, 2)
+  alreadyBilledCount Int?
+  reviewCount        Int?
+  notApplicableCount Int?
 
   invoices Invoice[]
 }
@@ -281,11 +293,14 @@ model Invoice {
   issuedById   String?
   issuedAt     DateTime?
 
-  lines       InvoiceLine[]
-  allocations PaymentAllocation[]
-  creditNotes CreditNote[]
+  lines         InvoiceLine[]
+  allocations   PaymentAllocation[]
+  creditNotes   CreditNote[]
+  billedCharges BilledCharge[]
 
-  @@unique([agreementId, periodStart])
+  // One recurring charge is billed once per month (BilledCharge, F65); an agreement may have
+  // several invoices for a month when charge types are billed separately.
+  @@index([agreementId, periodStart])
   @@index([partyId])
   @@index([unitId])
 }
@@ -300,6 +315,27 @@ model InvoiceLine {
   sourceType  String
   sourceId    String?
 
+  @@index([invoiceId])
+}
+
+/// One row per recurring charge billed for a month (F65): the identity of a recurring charge
+/// occurrence. Unique, so the same rent, fee or approved charge can never be billed twice for the
+/// same month, whatever runs, retries or simultaneous requests happen. Append-only (database rule).
+model BilledCharge {
+  id          String         @id @default(cuid())
+  agreementId String
+  agreement   Agreement      @relation(fields: [agreementId], references: [id])
+  periodStart DateTime       @db.Date
+  category    ChargeCategory
+  /// AGREEMENT_RENT / AGREEMENT_MANAGEMENT_FEE (sourceId = the agreement) or AGREEMENT_CHARGE (sourceId = the charge).
+  sourceType  String
+  sourceId    String
+  invoiceId   String
+  invoice     Invoice        @relation(fields: [invoiceId], references: [id])
+  amount      Decimal        @db.Decimal(14, 2)
+  createdAt   DateTime       @default(now())
+
+  @@unique([agreementId, periodStart, sourceType, sourceId])
   @@index([invoiceId])
 }
 

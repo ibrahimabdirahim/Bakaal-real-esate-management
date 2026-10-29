@@ -21,6 +21,7 @@ import { StatusBadge } from "@/components/status";
 import { RowActions } from "@/components/row-actions";
 import { invoiceActions, paymentActions } from "../../finance/record-actions";
 import { CheckCircle2, FileSignature, Trash2, Users } from "lucide-react";
+import { FirstBillingNotice } from "./first-billing";
 
 export default async function AccountPage({ params, searchParams }: PageProps<"/accounts/[id]">) {
   const actor = await requirePage("accounts.view");
@@ -105,6 +106,7 @@ export default async function AccountPage({ params, searchParams }: PageProps<"/
           </div>
         </div>
       )}
+      {sp.created === "1" && !archived && typeof sp.billing === "string" && <FirstBillingNotice actor={actor} partyId={party.id} outcome={sp.billing} />}
       {sp.archived === "1" && archived && (
         <div className="mb-6">
           <Notice tone="green">Account archived. It no longer appears in the register and cannot be used for new agreements, invoices or payments. Nothing was deleted.</Notice>

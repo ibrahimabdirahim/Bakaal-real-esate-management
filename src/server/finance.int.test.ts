@@ -65,15 +65,20 @@ describe("financial workflows against PostgreSQL", () => {
     expect(again.exceptions.map((e) => e.code)).toEqual(["ALREADY_INVOICED"]);
   });
 
-  it("rejects a duplicate recurring invoice at the database level", async () => {
+  it("rejects billing the same recurring charge twice for a month at the database level (F65)", async () => {
     const { rental, tenant, u1 } = await setup();
     await issueBilling(finance, "2026-09-01");
+    // A second invoice for the agreement and month may exist (charge types billed separately) …
+    const second = await db.invoice.create({
+      data: {
+        buildingId: (await db.building.findFirstOrThrow()).id, partyId: tenant.id, unitId: u1.id, agreementId: rental.id,
+        kind: "RECURRING", periodStart: new Date("2026-09-01T00:00:00Z"), total: "1.00",
+      },
+    });
+    // … but the rent already billed for September cannot be recorded as billed again.
     await expect(
-      db.invoice.create({
-        data: {
-          buildingId: (await db.building.findFirstOrThrow()).id, partyId: tenant.id, unitId: u1.id, agreementId: rental.id,
-          kind: "RECURRING", periodStart: new Date("2026-09-01T00:00:00Z"), total: "1.00",
-        },
+      db.billedCharge.create({
+        data: { agreementId: rental.id, periodStart: new Date("2026-09-01T00:00:00Z"), category: "RENT", sourceType: "AGREEMENT_RENT", sourceId: rental.id, invoiceId: second.id, amount: "1.00" },
       }),
     ).rejects.toThrow();
   });

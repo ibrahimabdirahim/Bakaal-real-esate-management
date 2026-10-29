@@ -17,7 +17,9 @@ const NO_DELETE = "Payments are never deleted: they are kept for the record. Rej
 export function invoiceActions(actor: Actor, i: { id: string; number: string | null; status: string; balance: number; party: { id: string } }): RowAction[] {
   const issued = i.status === "ISSUED";
   const items: RowAction[] = [{ label: "View invoice", href: `/invoices/${i.id}` }];
+  if (issued) items.push({ label: "Print or save as PDF", href: `/invoices/${i.id}?print=1` });
   if (issued && i.balance > 0 && can(actor.role, "payments.record")) items.push({ label: "Record payment", href: `/payments/new?partyId=${i.party.id}&invoiceId=${i.id}` });
+  if (issued && can(actor.role, "payments.view")) items.push({ label: "View payment allocations", href: `/invoices/${i.id}#payments` });
   if (!issued && can(actor.role, "invoices.issue_manual")) items.push({ label: "Review and issue", href: `/invoices/${i.id}#issue` });
   if (issued) {
     items.push(
@@ -30,6 +32,7 @@ export function invoiceActions(actor: Actor, i: { id: string; number: string | n
     items.push({ label: "Edit invoice", unavailable: "Drafts are not edited: delete the draft and create it again." });
     if (can(actor.role, "invoices.create_manual")) items.push(deleteAction("Delete draft", discardDraftAction.bind(null, i.id), "draft invoice"));
   }
+  if (can(actor.role, "audit.view")) items.push({ label: "View audit history", href: `/audit?entityType=Invoice&entityId=${i.id}` });
   return items;
 }
 

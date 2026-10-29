@@ -134,11 +134,14 @@ export function AccountCreateForm({
   units,
   canEditSensitive,
   maxBytes,
+  billMonth = null,
 }: {
   action: (s: ActionState, f: FormData) => Promise<ActionState>;
   units: Option[];
   canEditSensitive: boolean;
   maxBytes: number;
+  /** "October 2026" when the user may issue billing: offers issuing this month's invoice with the account (F65). */
+  billMonth?: string | null;
 }) {
   const [type, setType] = useState<AccountType>("TENANT");
   const [switched, setSwitched] = useState(false);
@@ -379,13 +382,26 @@ export function AccountCreateForm({
             {duplicates.length > 0 ? (
               <DuplicateError duplicates={duplicates} isEdit={false} cancelHref="/accounts" />
             ) : (
-              <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4">
+              <div className="space-y-4 border-t border-line pt-4">
+              {billMonth && (
+                <label className="flex items-start gap-3 rounded-lg border border-line bg-surface/60 p-3 text-sm text-ink">
+                  <input type="checkbox" name="billNow" defaultChecked={v ? v.billNow === "on" : true} className="mt-0.5 size-4 rounded border-slate-300" />
+                  <span>
+                    <span className="font-medium">{`Issue the ${billMonth} invoice now`}</span>
+                    <span className="block text-xs text-muted">
+                      Uses the monthly billing rules: only whole months are billed; a part month, a missing due date or a missing management fee is shown for review instead. Later billing runs for the month never bill the same charge again.
+                    </span>
+                  </span>
+                </label>
+              )}
+              <div className="flex flex-wrap items-center justify-end gap-3">
                 <Link href="/accounts" className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
                   Cancel
                 </Link>
                 <div className="[&>button]:px-6 [&>button]:py-2.5">
                   <SubmitButton>Create Account</SubmitButton>
                 </div>
+              </div>
               </div>
             )}
           </>

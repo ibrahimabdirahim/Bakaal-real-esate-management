@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { todayISO } from "./dates";
-import { chartMonths, periodQuery, periodRange, resolveDashboardPeriod } from "./dashboard-period";
+import { chartMonths, periodQuery, periodRange, resolveDashboardPeriod, weekStart } from "./dashboard-period";
 
 const today = "2026-10-24";
 
@@ -69,5 +69,16 @@ describe("dashboard periods", () => {
     expect(chartMonths({ from: "2025-11-20", to: "2026-02-03" })).toEqual(["2025-09-01", "2025-10-01", "2025-11-01", "2025-12-01", "2026-01-01", "2026-02-01"]);
     const long = chartMonths({ from: "2020-01-01", to: "2026-10-24" });
     expect([long.length, long[0], long.at(-1)]).toEqual([24, "2024-11-01", "2026-10-01"]);
+  });
+
+  it("offers Today and This week (Monday to today), also across month and year boundaries", () => {
+    expect(periodRange("today", today)).toEqual({ from: today, to: today });
+    expect(weekStart("2026-10-24")).toBe("2026-10-19"); // Saturday → Monday
+    expect(weekStart("2026-10-19")).toBe("2026-10-19"); // Monday itself
+    expect(weekStart("2026-10-25")).toBe("2026-10-19"); // Sunday ends the week
+    expect(periodRange("week", "2026-11-01")).toEqual({ from: "2026-10-26", to: "2026-11-01" }); // across a month end
+    expect(periodRange("week", "2027-01-02")).toEqual({ from: "2026-12-28", to: "2027-01-02" }); // across a year end
+    expect(resolveDashboardPeriod({ period: "week" }, today)).toMatchObject({ period: "week", label: "This week" });
+    expect(periodQuery({ period: "today", range: periodRange("today", today) })).toBe("period=today");
   });
 });
