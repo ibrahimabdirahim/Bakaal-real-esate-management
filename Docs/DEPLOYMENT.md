@@ -5,6 +5,22 @@ private **Cloudflare R2** bucket. Nothing deploys by itself: the database migrat
 and Render builds the code when `main` is pushed. Never put a credential in this repository, in chat or
 in a screenshot.
 
+## Production status — 2026-10-29
+
+| Item | State | Evidence |
+|---|---|---|
+| Code | **Live: `47503be`** (main) | `/api/health` exists (old code had none); nonce CSP and HSTS on every page |
+| Database | **Migrated**: 8 migrations, `20261029120000_billed_charges` applied | `npm run db:neon:status` → up to date; `/api/health` `latestMigration` |
+| Backup before the migration | `~/Bakaal-db-backups/2026-10-29_neon_before-billed-charges/` (not in git) | checksum OK, restore-tested |
+| Access control | Verified live | anonymous and forged-cookie requests: pages → sign-in, APIs → 401; HTTP → HTTPS |
+| Security headers | Verified live | CSP (nonce, strict-dynamic, frame-ancestors none, upgrade-insecure-requests), HSTS, COOP, nosniff, DENY |
+| **Document storage** | **NOT persistent** — `storageKind: "local"` | no R2 bucket or credentials exist yet → do 1b, then set the Render variables |
+| **Neon password** | **NOT rotated** — still the exposed one | do 1a now |
+| Signed-in smoke test | Not run on production (no test account; no real records to touch) | run section 3 yourself after 1a/1b |
+
+Until storage shows `"storageKind":"s3"`, do not upload documents in production: they would be lost at
+the next deploy or restart.
+
 ## 1. One-time set-up (owner, in the providers' consoles)
 
 ### 1a. Rotate the Neon password (if not done since it was exposed)
