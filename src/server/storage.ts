@@ -2,7 +2,7 @@
 // `public/`, so files are reachable only through the permission-checked download route.
 // Swappable later (e.g. for object storage) behind these four functions.
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, constants, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const ALLOWED_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" } as const;
@@ -42,6 +42,21 @@ function filePath(key: string): string {
   const full = path.resolve(root, key);
   if (!full.startsWith(root + path.sep)) throw new Error("Invalid storage key.");
   return full;
+}
+
+/**
+ * Whether documents can be saved: the storage folder exists (created if missing) and is writable. For the
+ * health check, so a missing persistent disk on the host shows up before anyone uploads.
+ */
+export async function storageWritable(): Promise<boolean> {
+  try {
+    const root = storageRoot();
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await access(root, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Writes the bytes under a new random key (written to a temporary file, then renamed). */

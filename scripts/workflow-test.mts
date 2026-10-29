@@ -121,7 +121,7 @@ try {
   );
   const health = await fetch(`${BASE}/api/health`, { redirect: "manual" });
   const healthBody = health.status === 200 ? await health.json() : null;
-  check("the health check answers without a session: database ok and the latest migration applied", health.status === 200 && healthBody?.status === "ok" && healthBody?.latestMigration === "20261029120000_billed_charges", JSON.stringify(healthBody));
+  check("the health check answers without a session: database ok and the latest migration applied", health.status === 200 && healthBody?.status === "ok" && healthBody?.storage === "ok" && healthBody?.latestMigration === "20261029120000_billed_charges", JSON.stringify(healthBody));
 
   const manager = await login("manager@workflow.test");
   check("manager signs in", !!manager.cookie && manager.status === 303);
