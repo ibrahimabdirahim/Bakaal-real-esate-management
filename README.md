@@ -175,20 +175,22 @@ pushed (if Render auto-deploys). Order matters, because new code may need the ne
 5. Check: `npm run db:neon:status` says up to date, and `https://<render-url>/api/health` returns
    `{"status":"ok","latestMigration":"<the newest migration folder>"}`; sign in and open the main pages.
 
-**Uploaded documents on Render (decided 2026-10-29: a persistent disk).** Before documents are uploaded in
-production: in Render → the service → *Disks*, add a disk (e.g. 1 GB) mounted at `/var/data` (this needs a
-paid instance and keeps the service to one instance), then add the environment variable
-`DOCUMENT_STORAGE_DIR=/var/data/documents` and redeploy. `/api/health` must then show `"storage":"ok"`.
-Render snapshots the disk daily; restoring documents and the Neon database to the same point keeps them
-consistent. Without the disk, files written to the server are lost at the next deploy or restart.
+**Uploaded documents in production: a private Cloudflare R2 bucket** (`DOCUMENT_STORAGE=s3`; decided
+2026-10-29, replacing the persistent-disk plan). Set-up, every environment variable, the rollout order,
+checks and recovery are in [Docs/DEPLOYMENT.md](Docs/DEPLOYMENT.md). `/api/health` must show
+`"storage":"ok"` and `"storageKind":"s3"`.
 
 If step 3 fails, the migration changed nothing (each runs in a transaction): fix and retry. To undo a
 deploy, redeploy the previous commit in Render; a migration is not rolled back automatically — restore
 from the Neon backup branch only if data were affected. Uploaded documents live on the server's disk
-(`storage/` locally, `DOCUMENT_STORAGE_DIR` on Render — see above).
+(`storage/` locally; the R2 bucket in production — see above).
 
 **Health check** — `GET /api/health` (no sign-in needed; reveals nothing): 200 when the app can reach
-its database, 503 when it cannot. Use it as Render's health check path.
+its database (with `storage` ok/unwritable and the latest migration), 503 when it cannot. Use it as
+Render's health check path.
+
+**Logs** — JSON lines (`"level":"error"` etc.) in Render's log viewer; set `ERROR_ALERT_WEBHOOK_URL` to
+also receive every logged error at a webhook. Credentials are redacted from log lines.
 
 ## Project structure
 

@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { Lock } from "lucide-react";
+import { connection } from "next/server";
 import { BrandLogo } from "@/components/brand";
 
 export const metadata = { title: "No access" };
 
-export default function NoAccess() {
+// Rendered per request (not prebuilt), so it carries the Content-Security-Policy nonce like every page.
+export default async function NoAccess() {
+  await connection();
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4">
       <BrandLogo width={110} />

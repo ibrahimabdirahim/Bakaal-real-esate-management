@@ -172,11 +172,9 @@ try {
   check("units page reflects the new count", (await getPage("/units", M)).html.includes("2 of 5 units registered (40%)"));
   const capacityDash = await getPage("/", M);
   check(
-    "the dashboard shows the building, unpaid balances, payments with collection rate, occupancy, arrears and more actions in order",
-    (() => {
-      const order = ["data-building", ">Unpaid Tenant Balance (KES)<", "Collection rate", ">Occupancy<", "Arrears overview (KES)", "More actions", "Recent activity"].map((t) => capacityDash.html.indexOf(t));
-      return order.every((p, i) => p > 0 && (i === 0 || p > order[i - 1])) && capacityDash.html.includes("Amounts owed, not cash");
-    })(),
+    "the dashboard shows the building, unpaid balances, payments with collection rate, occupancy, arrears and more actions",
+    // Presence here; the dashboard streams (F68), so the on-screen order is checked in the browser test.
+    ["data-building", ">Unpaid Tenant Balance (KES)<", "Collection rate", ">Occupancy<", "Arrears overview (KES)", "More actions", "Recent activity", "Amounts owed, not cash"].every((t) => capacityDash.html.includes(t)),
   );
 
   // Every account is created with one of the three account types; give the form accounts their own units.
