@@ -96,12 +96,11 @@ export async function login(emailInput: string, password: string): Promise<Login
     return { ok: false, error: "This account is temporarily locked after repeated failed sign-ins. Try again later." };
   }
   if (!(await verifyPassword(password, user.passwordHash))) {
-    const failed = user.failedLoginCount + 1;
+    // Counted in the database (atomic increment), so wrong passwords sent at the same moment are each
+    // counted and cannot slip past the lockout by all reading the same old count.
+    const { failedLoginCount: failed } = await db.user.update({ where: { id: user.id }, data: { failedLoginCount: { increment: 1 } }, select: { failedLoginCount: true } });
     const lock = failed >= MAX_FAILED_LOGINS;
-    await db.user.update({
-      where: { id: user.id },
-      data: { failedLoginCount: lock ? 0 : failed, lockedUntil: lock ? new Date(Date.now() + LOCK_MS) : user.lockedUntil },
-    });
+    if (lock) await db.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCK_MS) } });
     await audit(db, actor, {
       action: lock ? "auth.account_locked" : "auth.login_failed",
       entityType: "User",
