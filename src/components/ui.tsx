@@ -176,7 +176,7 @@ function labelRows(children: ReactNode, labels: string[]): ReactNode {
   });
 }
 
-export function Table({ head, children, empty }: { head: ReactNode[]; children: ReactNode; empty?: ReactNode }) {
+export function Table({ head, children, empty, emptyContent, alignRight = [], dense = false }: { head: ReactNode[]; children: ReactNode; empty?: ReactNode; /** Replaces the default empty message entirely (e.g. a heading and a button). */ emptyContent?: ReactNode; /** Column numbers (from 0) whose heading is right-aligned, e.g. amounts. */ alignRight?: number[]; /** Narrower padding, and headings may wrap when space is short (pass px-2! to the cells). */ dense?: boolean }) {
   const rows = Children.toArray(children);
   const labels = head.map((h) => (typeof h === "string" ? h : ""));
   return (
@@ -185,7 +185,7 @@ export function Table({ head, children, empty }: { head: ReactNode[]; children: 
         <thead>
           <tr>
             {head.map((h, i) => (
-              <th key={i} scope="col" className="bg-slate-50 px-3 py-2.5 text-left first:pl-4 text-xs font-semibold tracking-wide whitespace-nowrap text-slate-500 uppercase first:rounded-l-md last:rounded-r-md">
+              <th key={i} scope="col" className={`bg-slate-50 py-2.5 ${dense ? "px-2 align-bottom" : "px-3 whitespace-nowrap first:pl-4"} ${alignRight.includes(i) ? "text-right" : "text-left"} text-xs font-semibold tracking-wide text-slate-500 uppercase first:rounded-l-md last:rounded-r-md`}>
                 {h}
               </th>
             ))}
@@ -197,7 +197,7 @@ export function Table({ head, children, empty }: { head: ReactNode[]; children: 
           ) : (
             <tr>
               <td colSpan={head.length} className="px-4 py-2">
-                <EmptyState>{empty ?? "Nothing to show yet."}</EmptyState>
+                {emptyContent ?? <EmptyState>{empty ?? "Nothing to show yet."}</EmptyState>}
               </td>
             </tr>
           )}

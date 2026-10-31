@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { BillingSections, FinanceTabs } from "../finance/finance-tabs";
-import { Bell, FileText, Plus, Receipt, Scale, Users, Wallet } from "lucide-react";
+import { CalendarDays, ChevronDown, Plus, Receipt, Scale, Search, Users, Wallet } from "lucide-react";
 import { AccountBanner } from "../finance/account-banner";
 import { RowActions, type RowAction } from "@/components/row-actions";
 import { invoiceActions } from "../finance/record-actions";
@@ -10,12 +10,13 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import { can } from "@/server/auth/permissions";
 import type { Actor } from "@/server/auth/actor";
 import { billingSummary, INVOICE_SORTS, listCreditNotes, listInvoices, type InvoiceFilter, type InvoiceListFilter, type InvoiceSort } from "@/server/services/finance";
-import { ButtonLink, Card, Notice, FilterBar, FilterInput, FilterSelect, FilterSubmit, Money, PageHeader, Pagination, Stat, Table, Td } from "@/components/ui";
+import { ButtonLink, Card, Notice, FilterBar, FilterInput, FilterSubmit, Money, PageHeader, Table, Td } from "@/components/ui";
 import { addMonths, formatDate, formatMonth, isISODate, monthEnd, monthStart, todayISO } from "@/lib/dates";
 import { formatMoney, sumCents, tryCents } from "@/lib/money";
 import { paginate, queryWithoutPage } from "@/lib/paginate";
 import { CHARGE_CATEGORY_LABELS } from "../agreements/labels";
-import { InvoiceStatusBadge } from "./badges";
+import { InvoiceListStatus } from "./badges";
+import { Amount, ClearLink, control, Field, InvoicePager, NoInvoices, SummaryCard } from "./billing-ui";
 
 export const metadata = { title: "Billing & Payments" };
 
@@ -50,10 +51,19 @@ function moreActions(actor: Actor, month: string, periodQuery: string): RowActio
     items.push({ label: "Generate Recurring Bills (all charge types)", href: `/billing?month=${month}` });
     items.push({ label: "Bulk Create Invoices (choose accounts)", href: `/billing?month=${month}&choose=1` });
   }
-  if (can(actor.role, "notices.view")) items.push({ label: "Prepare Invoice Reminders", href: "/notices" });
+  if (can(actor.role, "billing.preview")) items.push({ label: "View Billing Runs", href: "/billing" });
+  items.push({ label: "View Credit Notes", href: "/invoices?view=credit-notes" });
+  if (can(actor.role, "notices.view")) items.push({ label: "Notices & Arrears / Prepare Reminders", href: "/notices" });
   items.push({ label: "Export Billing Report (CSV)", href: `/api/billing-report?download=1${periodQuery ? `&${periodQuery}` : ""}` });
   return items;
 }
+
+const PAGE_SIZE = 25;
+const INVOICE_COLUMNS = ["Invoice", "Account / Unit", "Billing Period", "Due Date", "Amount (KES)", "Paid (KES)", "Outstanding (KES)", "Status", "Actions"];
+/** Compact cells, centred vertically (the account cell has two lines). */
+const cell = "align-middle! px-2!";
+/** "Oct 2026": the billing month, short enough for the list. */
+const shortMonth = (m: string) => `${formatMonth(m).slice(0, 3)} ${m.slice(0, 4)}`;
 
 /** The permission check runs first (a refused visitor is still redirected); the lists then stream in. */
 export default async function InvoicesPage({ searchParams }: PageProps<"/invoices">) {
@@ -109,10 +119,13 @@ async function Invoices({ actor, sp }: { actor: Actor; sp: Record<string, string
     creditView ? listCreditNotes(actor, { q: q || undefined, from: from || undefined, to: to || undefined }) : Promise.resolve([]),
     billingSummary(actor, from && to ? { from, to } : null),
   ]);
-  const { items: invoices, ...pg } = paginate(all, sp.page);
+  const { items: invoices, ...pg } = paginate(all, sp.page, PAGE_SIZE);
+  // How many secondary (Advanced) filters differ from their defaults.
+  const advanced = [str("charge"), str("minOwed"), sort !== "newest", periodParam || explicitFrom || explicitTo].filter(Boolean).length;
   const canUnits = can(actor.role, "units.view");
   const periodQuery = from && to ? `from=${from}&to=${to}` : "";
   const billMonth = period || current;
+  const createHref = can(actor.role, "invoices.create_manual") ? (partyId ? `/invoices/new?partyId=${partyId}` : "/invoices/new") : null;
   const keep = (extra: Record<string, string>) => {
     const qs = new URLSearchParams(Object.fromEntries(Object.entries({ ...queryWithoutPage(sp), ...extra }).filter(([, v]) => v)));
     return `/invoices${qs.size ? `?${qs}` : ""}`;
@@ -122,60 +135,30 @@ async function Invoices({ actor, sp }: { actor: Actor; sp: Record<string, string
     <>
       <PageHeader
         title="Billing & Payments"
-        icon={FileText}
-        description="Invoices for every account, what has been paid or credited, and what is still owed. Issued invoices are never edited: corrections use credit notes."
+        description="Manage invoices, payments, outstanding balances and billing activities."
         actions={
           <>
-            {can(actor.role, "notices.view") && <ButtonLink variant="secondary" href="/notices" icon={Bell}>Reminders</ButtonLink>}
+            {createHref && <ButtonLink href={createHref} icon={Plus}>Create Invoice</ButtonLink>}
             {can(actor.role, "payments.record") && <ButtonLink variant="secondary" href={partyId ? `/payments/new?partyId=${partyId}` : "/payments/new"} icon={Wallet}>Record Payment</ButtonLink>}
-            {can(actor.role, "invoices.create_manual") && <ButtonLink href={partyId ? `/invoices/new?partyId=${partyId}` : "/invoices/new"} icon={Plus}>Create Invoice</ButtonLink>}
             <RowActions label="More billing actions" buttonLabel="More actions" prominent items={moreActions(actor, billMonth, periodQuery)} />
           </>
         }
       />
-      <FinanceTabs actor={actor} current="billing" partyId={partyId} />
       {partyId && <AccountBanner actor={actor} partyId={partyId} clearHref="/invoices" />}
       {sp.discarded === "1" && <div className="mb-4"><Notice tone="green">The draft invoice was deleted. The deletion is recorded in the audit log.</Notice></div>}
 
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <form method="get" action="/invoices" className="flex flex-wrap items-end gap-2" aria-label="Billing period">
-          {creditView && <input type="hidden" name="view" value="credit-notes" />}
-          {partyId && <input type="hidden" name="partyId" value={partyId} />}
-          <FilterSelect
-            label="Billing period"
-            name="period"
-            defaultValue={explicitFrom || explicitTo ? "" : period || "all"}
-            options={[...(explicitFrom || explicitTo ? [{ value: "", label: periodLabel }] : []), { value: "all", label: "All periods" }, ...months.map((m) => ({ value: m, label: formatMonth(m) }))]}
-          />
-          <FilterSubmit />
-        </form>
-        <p className="text-xs text-muted">{`Showing ${periodLabel}${period === current && !explicitFrom ? " (the current billing month)" : ""}. Months follow Nairobi time.`}</p>
+      {/* Four across when the content area is wide enough (≥ 64rem), two otherwise: sized by the content, not the window. */}
+      <div className="@container">
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 @5xl:grid-cols-4" data-billing-summary>
+          <SummaryCard label="Total tenants" value={String(summary.tenants)} icon={Users} tone="blue" href="/accounts" hint={summary.otherAccounts ? `With an agreement in force today · + ${summary.otherAccounts} owner account(s)` : "With an agreement in force today"} />
+          <SummaryCard label={`Total billed · ${periodLabel}`} value={formatMoney(summary.billed)} icon={Receipt} tone="amber" href={keep({ status: "" })} hint={`${summary.invoiceCount} issued invoice(s)`} />
+          <SummaryCard label={`Paid / credited · ${periodLabel}`} value={formatMoney(summary.paid + summary.credited)} icon={Wallet} tone="green" hint={`Paid ${formatMoney(summary.paid)} · Credited ${formatMoney(summary.credited)}`} />
+          <SummaryCard label="Outstanding balance" value={formatMoney(summary.outstanding)} icon={Scale} tone="red" href="/invoices?status=OPEN&period=all" hint={`${formatMoney(summary.pastDue)} past due · ${summary.openInvoices} invoice(s)`} />
+        </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-billing-summary>
-        <Stat label="Total tenants" value={String(summary.tenants)} icon={Users} tone="blue" href="/accounts" hint={summary.otherAccounts ? `+ ${summary.otherAccounts} owner account(s)` : "With an agreement in force today"} />
-        <Stat label={`Total billed · ${periodLabel}`} value={formatMoney(summary.billed)} icon={Receipt} tone="amber" href={keep({ status: "" })} hint={`${summary.invoiceCount} issued invoice(s)`} />
-        <Stat
-          label={`Paid / credited · ${periodLabel}`}
-          value={formatMoney(summary.paid + summary.credited)}
-          icon={Wallet}
-          tone="green"
-          hint={`Paid ${formatMoney(summary.paid)} · credited ${formatMoney(summary.credited)}`}
-        />
-        <Stat
-          label="Outstanding balance · all periods"
-          value={formatMoney(summary.outstanding)}
-          icon={Scale}
-          tone="red"
-          href="/invoices?status=OPEN&period=all"
-          hint={`${formatMoney(summary.pastDue)} past due · ${summary.openInvoices} invoice(s)`}
-        />
-      </div>
-      <p className="-mt-3 mb-6 text-xs text-muted">
-        {`Tenants: rent-paying accounts with an agreement in force today, each counted once. Billed and paid / credited: the issued invoices of ${periodLabel} (drafts excluded); paid means payments allocated to those invoices${summary.unallocated ? `, so ${formatMoney(summary.unallocated)} received but not yet allocated is not counted` : ""}. Outstanding: every issued invoice still owed today, whatever its period${period || explicitFrom ? `; ${formatMoney(summary.periodOutstanding)} of it is from ${periodLabel}` : ""}.`}
-      </p>
-
-      <BillingSections actor={actor} current={creditView ? "credit-notes" : "invoices"} />
+      <FinanceTabs actor={actor} current="billing" partyId={partyId} />
+      {creditView && <BillingSections actor={actor} current="credit-notes" />}
       {creditView ? (
         <Card>
           <FilterBar>
@@ -218,50 +201,81 @@ async function Invoices({ actor, sp }: { actor: Actor; sp: Record<string, string
         </Card>
       ) : (
       <Card>
-        <FilterBar>
+        <form method="get" action="/invoices" className="no-print mb-5" aria-label="Filter invoices">
           {partyId && <input type="hidden" name="partyId" value={partyId} />}
-          <input type="hidden" name="period" value={explicitFrom || explicitTo ? "" : period || "all"} />
           {explicitFrom && <input type="hidden" name="from" value={explicitFrom} />}
           {explicitTo && <input type="hidden" name="to" value={explicitTo} />}
-          <FilterInput label="Invoice no., account or unit" name="q" defaultValue={q} placeholder="e.g. INV-2026-000012" />
-          <FilterSelect label="Status" name="status" defaultValue={status} options={FILTERS} />
-          <FilterSelect label="Unit" name="unitId" defaultValue={str("unitId")} options={[{ value: "", label: "All units" }, ...summary.units.map((u) => ({ value: u.id, label: `Unit ${u.unitNumber}` }))]} />
-          <FilterSelect label="Account type" name="type" defaultValue={str("type")} options={ACCOUNT_TYPE_FILTER} />
-          <FilterSelect label="Charge type" name="charge" defaultValue={str("charge")} options={CHARGE_FILTER} />
-          <FilterInput label="Due from" name="dueFrom" type="date" defaultValue={str("dueFrom")} />
-          <FilterInput label="Due to" name="dueTo" type="date" defaultValue={str("dueTo")} />
-          <FilterInput label="Outstanding at least (KES)" name="minOwed" inputMode="decimal" defaultValue={str("minOwed")} placeholder="e.g. 1,000" />
-          <FilterSelect label="Sort by" name="sort" defaultValue={sort} options={Object.entries(INVOICE_SORTS).map(([value, label]) => ({ value, label }))} />
-          <FilterSubmit />
-          <Link href={partyId ? `/invoices?partyId=${partyId}&period=all` : "/invoices?period=all"} className="self-end pb-2 text-sm text-primary-600 hover:underline">Clear filters</Link>
-        </FilterBar>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="relative block w-full sm:w-auto sm:min-w-48 sm:flex-[2]">
+              <span className="sr-only">Search invoice, tenant or unit</span>
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" aria-hidden />
+              <input name="q" defaultValue={q} placeholder="Search invoice, tenant or unit…" className={`${control} pl-9`} />
+            </label>
+            <Field label="Status" className="min-w-32 flex-1"><select name="status" defaultValue={status} className={control}>{FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>
+            <Field label="Unit" className="min-w-32 flex-1"><select name="unitId" defaultValue={str("unitId")} className={control}><option value="">All units</option>{summary.units.map((u) => <option key={u.id} value={u.id}>{`Unit ${u.unitNumber}`}</option>)}</select></Field>
+            <Field label="Account type" className="min-w-36 flex-1"><select name="type" defaultValue={str("type")} className={control}>{ACCOUNT_TYPE_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>
+            <fieldset className="w-full min-w-0 sm:w-auto sm:min-w-72 sm:flex-[1.6]">
+              <legend className="mb-1 block text-xs font-medium text-slate-600">Due date</legend>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 shadow-sm focus-within:border-primary-500 focus-within:ring-1 focus-within:ring-primary-500">
+                <CalendarDays className="size-4 shrink-0 text-slate-400" aria-hidden />
+                <label className="min-w-0 flex-1"><span className="sr-only">Due from</span><input type="date" name="dueFrom" defaultValue={str("dueFrom")} className="w-full min-w-0 border-0 bg-transparent px-1 py-2 text-sm focus:ring-0 focus:outline-none" /></label>
+                <span className="text-slate-400" aria-hidden>–</span>
+                <label className="min-w-0 flex-1"><span className="sr-only">Due to</span><input type="date" name="dueTo" defaultValue={str("dueTo")} className="w-full min-w-0 border-0 bg-transparent px-1 py-2 text-sm focus:ring-0 focus:outline-none" /></label>
+              </div>
+            </fieldset>
+          </div>
+          {/* Secondary filters. Their controls stay in the form while closed, so what is chosen is kept. */}
+          <div className="relative mt-3">
+            <details className="group">
+              <summary className="flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg py-2 pr-2 text-sm font-medium text-ink hover:text-primary-700 [&::-webkit-details-marker]:hidden">
+                <ChevronDown className="size-4 transition group-open:rotate-180" aria-hidden /> Advanced filters
+                {advanced > 0 && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-xs text-primary-700">{`${advanced} active`}</span>}
+              </summary>
+              <div className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-line bg-surface/60 p-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Charge type"><select name="charge" defaultValue={str("charge")} className={control}>{CHARGE_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>
+                <Field label="Billing period">
+                  <select name="period" defaultValue={explicitFrom || explicitTo ? "" : period || "all"} className={control}>
+                    {(explicitFrom || explicitTo) && <option value="">{periodLabel}</option>}
+                    <option value="all">All periods</option>
+                    {months.map((m) => <option key={m} value={m}>{formatMonth(m)}</option>)}
+                  </select>
+                </Field>
+                <Field label="Outstanding at least (KES)"><input name="minOwed" inputMode="decimal" defaultValue={str("minOwed")} placeholder="e.g. 1,000" className={control} /></Field>
+                <Field label="Sort by"><select name="sort" defaultValue={sort} className={control}>{Object.entries(INVOICE_SORTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+              </div>
+            </details>
+            <div className="mt-3 flex items-center gap-3 sm:absolute sm:top-0 sm:right-0 sm:mt-0">
+              <button type="submit" className="rounded-lg bg-primary-600 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">Apply</button>
+              <ClearLink href={partyId ? `/invoices?partyId=${partyId}&period=all` : "/invoices?period=all"} />
+            </div>
+          </div>
+        </form>
         {str("minOwed") && minOwedCents == null && <div className="mb-4"><Notice tone="red">“Outstanding at least” must be an amount in KES, e.g. 1,000 or 1000.50. That filter was not applied.</Notice></div>}
-        <Table head={["Invoice", "Account", "Unit", "Charges", "Billing period", "Invoice date", "Due date", "Amount", "Paid", "Credits", "Outstanding", "Status", <span key="a" className="sr-only">Actions</span>]} empty={all.length === 0 && !filtered && period ? `No invoices for ${periodLabel} yet. Use More actions → Generate Recurring Bills to preview this month's billing.` : "No invoices match these filters."}>
+        <Table dense head={INVOICE_COLUMNS} alignRight={[4, 5, 6]} emptyContent={<NoInvoices createHref={createHref} filtered={filtered} />}>
           {invoices.map((i) => (
             <tr key={i.id}>
-              <Td><Link href={`/invoices/${i.id}`} className="font-medium whitespace-nowrap text-primary-600 hover:underline">{i.number ?? "Draft"}</Link></Td>
-              <Td>
-                <Link href={`/invoices?partyId=${i.party.id}&period=all`} className="hover:underline">{i.party.displayName}</Link>
-                <span className="block text-xs text-muted">{i.agreementId ? <Link href={`/agreements/${i.agreementId}`} className="hover:underline">{ACCOUNT_TYPE[i.agreementType!]}</Link> : "No agreement"}</span>
+              <Td className={cell}><Link href={`/invoices/${i.id}`} className="font-medium whitespace-nowrap text-primary-600 hover:underline">{i.number ?? "Draft"}</Link></Td>
+              <Td className={`${cell} sm:min-w-32 sm:whitespace-normal!`}>
+                <Link href={`/invoices?partyId=${i.party.id}&period=all`} className="font-medium text-ink hover:underline">{i.party.displayName}</Link>
+                <span className="block text-xs text-muted">{canUnits ? <Link href={`/units/${i.unit.id}`} className="hover:underline">{`Unit ${i.unit.unitNumber}`}</Link> : `Unit ${i.unit.unitNumber}`}</span>
               </Td>
-              <Td>{canUnits ? <Link href={`/units/${i.unit.id}`} className="hover:underline">{i.unit.unitNumber}</Link> : i.unit.unitNumber}</Td>
-              <Td wrap>{i.chargeTypes.length ? i.chargeTypes.map((c) => CHARGE_CATEGORY_LABELS[c]).join(", ") : "—"}</Td>
-              <Td>{i.periodStart ? formatMonth(i.periodStart) : "Manual"}</Td>
-              <Td>{i.issueDate ? formatDate(i.issueDate) : <span className="text-slate-500">Not issued</span>}</Td>
-              <Td>{formatDate(i.dueDate)}</Td>
-              <Td><Money cents={i.total} /></Td>
-              <Td>{i.status === "ISSUED" ? <Money cents={i.allocated} /> : "—"}</Td>
-              <Td>{i.credited > 0 ? <Money cents={i.credited} /> : "—"}</Td>
-              <Td className="font-medium text-navy-900"><Money cents={i.balance} /></Td>
-              <Td><InvoiceStatusBadge s={i} /></Td>
-              <Td className="w-px text-right"><RowActions label={`Actions for ${i.number ?? "draft invoice"}`} items={invoiceActions(actor, i)} /></Td>
+              <Td className={cell}>{i.periodStart ? shortMonth(i.periodStart) : "Manual"}</Td>
+              <Td className={cell}>{formatDate(i.dueDate)}</Td>
+              <Td className={`${cell} text-right`}><Amount cents={i.total} /></Td>
+              <Td className={`${cell} text-right`}>{i.status === "ISSUED" ? <Amount cents={i.allocated} /> : "—"}</Td>
+              <Td className={`${cell} text-right font-medium text-navy-900`}><Amount cents={i.balance} /></Td>
+              <Td className={cell}><InvoiceListStatus s={i} /></Td>
+              <Td className={`${cell} w-px text-right`}><RowActions dots label={`Actions for ${i.number ?? "draft invoice"}`} items={invoiceActions(actor, i)} /></Td>
             </tr>
           ))}
         </Table>
-        {all.length > 0 && (
-          <p className="mt-3 text-xs text-muted">{`${all.length} invoice(s) listed · amount ${formatMoney(sumCents(all.map((i) => i.total)))} · still owed ${formatMoney(sumCents(all.filter((i) => i.status === "ISSUED").map((i) => i.balance)))}`}</p>
-        )}
-        <Pagination {...pg} path="/invoices" query={queryWithoutPage(sp)} />
+        <InvoicePager
+          {...pg}
+          size={PAGE_SIZE}
+          shown={invoices.length}
+          query={queryWithoutPage(sp)}
+          note={`amount ${formatMoney(sumCents(all.map((i) => i.total)))} · still owed ${formatMoney(sumCents(all.filter((i) => i.status === "ISSUED").map((i) => i.balance)))}`}
+        />
       </Card>
       )}
     </>

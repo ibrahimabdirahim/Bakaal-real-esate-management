@@ -438,9 +438,10 @@ try {
   const workspaceTabs = (html: string) => [...(html.match(/<nav aria-label="Billing and payments"[\s\S]*?<\/nav>/)?.[0] ?? "").matchAll(/>([^<>]+)<\/a>/g)].map((x) => x[1]);
   check("the workspace has two lists, Invoices and Payments (the overview is a link beside them)", JSON.stringify(workspaceTabs(invTabs)) === JSON.stringify(["Invoices", "Payments", "Billing overview"]), workspaceTabs(invTabs).join(", "));
   check(
-    "Invoices keeps credit notes, notices & arrears and billing runs one click away, with Create Invoice, Record Payment and an Actions menu per row",
+    "Invoices keeps credit notes, notices & arrears and billing runs one click away, with Create Invoice, Record Payment, the nine list columns and an Actions menu per row",
     ['href="/invoices?view=credit-notes"', 'href="/notices"', 'href="/billing"'].every((t) => invTabs.includes(t)) && invTabs.includes(">Create Invoice<") && invTabs.includes(">Record Payment<") &&
-      [">Account<", ">Charges<", ">Invoice date<", ">Due date<", ">Paid<", ">Credits<", ">Outstanding<"].every((t) => invTabs.includes(t)) && invTabs.includes(`aria-label="Actions for ${invoice.number}"`) &&
+      [">Invoice<", ">Account / Unit<", ">Billing Period<", ">Due Date<", ">Amount (KES)<", ">Paid (KES)<", ">Outstanding (KES)<", ">Status<", ">Actions<"].every((t) => invTabs.includes(t)) &&
+      ![">Charges<", ">Invoice date<", ">Credits<"].some((t) => invTabs.includes(t)) && invTabs.includes(`aria-label="Actions for ${invoice.number}"`) &&
       invTabs.includes(`href="/payments/new?partyId=${partyId}&amp;invoiceId=${invoice.id}"`) && invTabs.includes("Issued invoices are kept for the record"),
   );
   const overviewPage = (await getPage("/finance", finance)).html;

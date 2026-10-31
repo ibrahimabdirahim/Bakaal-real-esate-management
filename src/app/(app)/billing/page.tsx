@@ -5,13 +5,13 @@ import { can } from "@/server/auth/permissions";
 import { getBillingRun, listBillingRuns, outcomeCounts, previewBilling } from "@/server/services/billing";
 import { LINE_CATEGORIES, type BillingPreview, type LineCategory } from "@/server/billing/compute";
 import { BusinessError } from "@/server/auth/actor";
-import { Badge, Card, Money, Notice, PageHeader, Table, Td } from "@/components/ui";
+import { Badge, Card, Money, Notice, Table, Td } from "@/components/ui";
 import { ActionForm, SubmitButton } from "@/components/forms";
 import { addMonths, formatDate, formatDateTime, formatMonth, fromDbDate, monthStart, todayISO } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { AGREEMENT_TYPE_LABELS, CHARGE_CATEGORY_LABELS } from "../agreements/labels";
 import { issueBillingAction } from "./actions";
-import { CalendarClock, CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 export const metadata = { title: "Billing runs" };
 
@@ -70,11 +70,7 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
 
   return (
     <>
-      <PageHeader
-        icon={CalendarClock}
-        title="Billing runs"
-        description="Bill a month: choose the charge types and the accounts, preview, then confirm. Each recurring charge is billed at most once per month, so running a month again, or another charge type later, never duplicates a charge."
-      />
+      <h1 className="sr-only">Billing runs</h1>
       <FinanceTabs actor={actor} current="billing" />
       <BillingSections actor={actor} current="runs" />
 
